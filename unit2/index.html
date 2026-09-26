@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unit 2 Overview | Regression Stability & Classification</title>
+  <meta name="description" content="Unit 2 Overview: Ridge Regression for Multicollinearity and SVM Classification for Air Quality Hazard Categories.">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  <script src="../assets/gauge.js" defer></script>
+  <script src="../assets/charts.js" defer></script>
+</head>
+<body>
+
+  <!-- Persistent Navigation -->
+  <nav class="instrument-nav">
+    <a href="../index.html" class="nav-brand">
+      <span class="status-dot"></span>
+      <span class="nav-brand-text">AQI PROFILER</span>
+      <span class="nav-brand-sub">UNIT 2</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../index.html">Overview</a></li>
+      <li><a href="index.html" class="active">Unit 2 Overview</a></li>
+      <li><a href="ridge.html">Ridge Regression</a></li>
+      <li><a href="svm.html">SVM Classification</a></li>
+    </ul>
+    <!-- Persistent Live Nav AQI Chip -->
+    <a href="../unit1/imputation.html" class="nav-aqi-chip" title="Live Instrument Reading">
+      <canvas id="nav-aqi-canvas"></canvas>
+      <span id="nav-aqi-val" class="nav-aqi-val">--</span>
+      <span id="nav-aqi-label" class="nav-aqi-status">--</span>
+    </a>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-wrapper">
+
+    <!-- Page Header -->
+    <header class="page-header">
+      <div class="breadcrumb">
+        <a href="../index.html">Syllabus Overview</a> / <span>Unit 2</span>
+      </div>
+      <h1 class="page-title">Unit 2: Regression Stability & Classification</h1>
+      <p class="page-subtitle">
+        Analyze multicollinearity mitigation with Ridge L₂ regularization coefficient shrinkage and evaluate linear vs. non-linear RBF Support Vector Machines for multi-class AQI hazard classification.
+      </p>
+    </header>
+
+    <!-- 2 Algorithm Panels Grid -->
+    <div class="grid-2">
+
+      <!-- Panel 1: Ridge Regression -->
+      <a href="ridge.html" class="algo-card" id="card-ridge">
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--aqi-good); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">
+            ALGORITHM 01
+          </div>
+          <h2 class="algo-title">Ridge Regression Regularization</h2>
+          <p class="algo-preview-text">
+            Mitigate sensor multicollinearity when predicting CO(GT). Observe coefficient shrinkage, sign flipping, and test set R² stability across penalty levels (α ∈ [0, 100]).
+          </p>
+        </div>
+        <div>
+          <div class="sparkline-container">
+            <canvas id="sparkline-ridge"></canvas>
+          </div>
+          <div style="margin-top: 0.75rem; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);">
+            <span>Top Corr Pair: PT08.S1 ↔ PT08.S5 (r=0.90)</span>
+            <span style="color: var(--aqi-good);">Open Ridge &rarr;</span>
+          </div>
+        </div>
+      </a>
+
+      <!-- Panel 2: SVM Classification -->
+      <a href="svm.html" class="algo-card" id="card-svm">
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--aqi-moderate); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">
+            ALGORITHM 02
+          </div>
+          <h2 class="algo-title">SVM Air Quality Classification</h2>
+          <p class="algo-preview-text">
+            Classify CO(GT) concentrations into Safe, Moderate, and Hazardous categories. Compare Linear vs. RBF kernel accuracy, 3×3 confusion matrices, and 2D PCA decision boundaries.
+          </p>
+        </div>
+        <div>
+          <div class="sparkline-container">
+            <canvas id="sparkline-svm"></canvas>
+          </div>
+          <div style="margin-top: 0.75rem; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);">
+            <span>RBF Kernel Accuracy: 81.8%</span>
+            <span style="color: var(--aqi-moderate);">Open SVM &rarr;</span>
+          </div>
+        </div>
+      </a>
+
+    </div>
+
+  </main>
+
+  <!-- Instrument Footer -->
+  <footer class="instrument-footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <strong>B.TECH 3RD YEAR MACHINE LEARNING SUBJECT PROJECT</strong><br>
+        Unit 2 Algorithm Directory
+      </div>
+      <div style="font-family: var(--font-mono); font-size: 0.8rem;">
+        Regression Stability and Classification of Urban Air Quality
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const [ridgeRes, svmRes] = await Promise.all([
+          fetch('../data/ridge_results.json').then(r => r.json()),
+          fetch('../data/svm_results.json').then(r => r.json())
+        ]);
+
+        if (typeof initUnit2Sparklines === 'function') {
+          initUnit2Sparklines(ridgeRes, svmRes);
+        }
+      } catch (err) {
+        console.error("Error loading JSON data for Unit 2 sparklines:", err);
+      }
+    });
+  </script>
+
+</body>
+</html>

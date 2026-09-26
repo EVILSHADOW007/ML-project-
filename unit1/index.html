@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unit 1 Overview | Urban Air Quality Profiling</title>
+  <meta name="description" content="Unit 1 Overview: Imputation, Covariance Analysis, and Polynomial Curve Fitting.">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  <script src="../assets/gauge.js" defer></script>
+  <script src="../assets/charts.js" defer></script>
+</head>
+<body>
+
+  <!-- Persistent Navigation -->
+  <nav class="instrument-nav">
+    <a href="../index.html" class="nav-brand">
+      <span class="status-dot"></span>
+      <span class="nav-brand-text">AQI PROFILER</span>
+      <span class="nav-brand-sub">UNIT 1</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../index.html">Overview</a></li>
+      <li><a href="index.html" class="active">Unit 1 Overview</a></li>
+      <li><a href="../unit2/index.html">Unit 2</a></li>
+      <li><a href="imputation.html">Imputation</a></li>
+      <li><a href="covariance.html">Covariance</a></li>
+      <li><a href="polynomial.html">Polyfit</a></li>
+    </ul>
+    <!-- Persistent Live Nav AQI Chip -->
+    <a href="imputation.html" class="nav-aqi-chip">
+      <canvas id="nav-aqi-canvas"></canvas>
+      <span id="nav-aqi-val" class="nav-aqi-val">--</span>
+      <span id="nav-aqi-label" class="nav-aqi-status">--</span>
+    </a>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-wrapper">
+
+    <!-- Page Header -->
+    <header class="page-header">
+      <div class="breadcrumb">
+        <a href="../index.html">Syllabus Overview</a> / <span>Unit 1</span>
+      </div>
+      <h1 class="page-title">Unit 1: Urban Air Quality Profiling</h1>
+      <p class="page-subtitle">
+        Explore three core statistical & machine learning methods for handling missing sensor telemetry, measuring pollutant co-dependence, and modeling non-linear diurnal trends.
+      </p>
+    </header>
+
+    <!-- 3 Algorithm Panels Grid -->
+    <div class="grid-3">
+
+      <!-- Panel 1: Imputation -->
+      <a href="imputation.html" class="algo-card" id="card-imputation">
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--aqi-good); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">
+            METHOD 01
+          </div>
+          <h2 class="algo-title">Missing Data Imputation</h2>
+          <p class="algo-preview-text">
+            Compare Mean, Median, and K-Nearest Neighbors (KNN) algorithms to reconstruct missing sensor readings with live point-by-point staggering.
+          </p>
+        </div>
+        <div>
+          <div class="sparkline-container">
+            <canvas id="sparkline-imputation"></canvas>
+          </div>
+          <div style="margin-top: 0.75rem; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);">
+            <span>CO(GT) Imputation</span>
+            <span style="color: var(--aqi-good);">Open Imputation &rarr;</span>
+          </div>
+        </div>
+      </a>
+
+      <!-- Panel 2: Covariance -->
+      <a href="covariance.html" class="algo-card" id="card-covariance">
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--aqi-moderate); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">
+            METHOD 02
+          </div>
+          <h2 class="algo-title">Covariance Matrix & Co-dependence</h2>
+          <p class="algo-preview-text">
+            Interactive correlation heatmap across 6 parameters (CO, C6H6, NOx, NO2, Temperature, Humidity) with clickable scatter plot detail locking.
+          </p>
+        </div>
+        <div>
+          <div class="sparkline-container">
+            <canvas id="sparkline-covariance"></canvas>
+          </div>
+          <div style="margin-top: 0.75rem; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);">
+            <span>Top Corr: CO(GT) ↔ C6H6(GT) (+0.93)</span>
+            <span style="color: var(--aqi-moderate);">Open Matrix &rarr;</span>
+          </div>
+        </div>
+      </a>
+
+      <!-- Panel 3: Polynomial Curve Fitting -->
+      <a href="polynomial.html" class="algo-card" id="card-polyfit">
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--aqi-sensitive); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">
+            METHOD 03
+          </div>
+          <h2 class="algo-title">Polynomial Curve Fitting</h2>
+          <p class="algo-preview-text">
+            Dynamic degree slider (1-4) fitting diurnal NO2(GT) cycle with smooth curve morphing, live R² / RMSE counters, and held-out validation overfitting analysis.
+          </p>
+        </div>
+        <div>
+          <div class="sparkline-container">
+            <canvas id="sparkline-polyfit"></canvas>
+          </div>
+          <div style="margin-top: 0.75rem; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);">
+            <span>NO2 Rush-Hour Fit: Deg 3</span>
+            <span style="color: var(--aqi-sensitive);">Open Polyfit &rarr;</span>
+          </div>
+        </div>
+      </a>
+
+    </div>
+
+  </main>
+
+  <!-- Instrument Footer -->
+  <footer class="instrument-footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <strong>B.TECH 3RD YEAR MACHINE LEARNING SUBJECT PROJECT</strong><br>
+        Unit 1 Algorithm Directory
+      </div>
+      <div style="font-family: var(--font-mono); font-size: 0.8rem;">
+        Urban Air Quality Profiling
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const [impRes, covRes, polyRes] = await Promise.all([
+          fetch('../data/imputation_results.json').then(r => r.json()),
+          fetch('../data/covariance_results.json').then(r => r.json()),
+          fetch('../data/polyfit_results.json').then(r => r.json())
+        ]);
+
+        // Initialize Sparklines with live JSON data
+        initUnit1Sparklines(impRes, covRes, polyRes);
+      } catch (err) {
+        console.error("Error loading JSON data for sparklines:", err);
+      }
+    });
+  </script>
+
+</body>
+</html>

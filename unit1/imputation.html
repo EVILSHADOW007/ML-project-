@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Imputation Pipeline | Urban Air Quality Profiling</title>
+  <meta name="description" content="Interactive Imputation Pipeline: Mean, Median, and KNN missing value reconstruction with staggered point resolution animation.">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  <script src="../assets/gauge.js" defer></script>
+  <script src="../assets/charts.js" defer></script>
+</head>
+<body>
+
+  <!-- Persistent Navigation -->
+  <nav class="instrument-nav">
+    <a href="../index.html" class="nav-brand">
+      <span class="status-dot"></span>
+      <span class="nav-brand-text">AQI PROFILER</span>
+      <span class="nav-brand-sub">IMPUTATION</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../index.html">Overview</a></li>
+      <li><a href="index.html">Unit 1 Overview</a></li>
+      <li><a href="../unit2/index.html">Unit 2</a></li>
+      <li><a href="imputation.html" class="active">Imputation</a></li>
+      <li><a href="covariance.html">Covariance</a></li>
+      <li><a href="polynomial.html">Polyfit</a></li>
+    </ul>
+    <!-- Persistent Live Nav AQI Chip -->
+    <a href="imputation.html" class="nav-aqi-chip">
+      <canvas id="nav-aqi-canvas"></canvas>
+      <span id="nav-aqi-val" class="nav-aqi-val">--</span>
+      <span id="nav-aqi-label" class="nav-aqi-status">--</span>
+    </a>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-wrapper">
+
+    <!-- Page Header -->
+    <header class="page-header">
+      <div class="breadcrumb">
+        <a href="../index.html">Home</a> / <a href="index.html">Unit 1</a> / <span>Imputation</span>
+      </div>
+      <h1 class="page-title">Missing Data Imputation Pipeline</h1>
+      <p class="page-subtitle">
+        Sensor telemetry often suffers dropouts due to power loss or signal interference. Select an imputation strategy and trigger staggered reconstruction to observe how missing points resolve.
+      </p>
+    </header>
+
+    <!-- Interactive Control Bar -->
+    <div class="control-bar">
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase;">Method:</span>
+        <div class="segmented-control">
+          <button class="segmented-btn imp-tab-btn" data-method="mean">Mean</button>
+          <button class="segmented-btn imp-tab-btn" data-method="median">Median</button>
+          <button class="segmented-btn imp-tab-btn active" data-method="knn">KNN (k=3)</button>
+        </div>
+      </div>
+
+      <button id="btn-fill-missing" class="btn-instrument btn-instrument-primary">
+        ⚡ Fill missing values
+      </button>
+    </div>
+
+    <!-- Main Chart & Metrics Grid -->
+    <div class="grid-2" style="grid-template-columns: 2.2fr 1fr;">
+
+      <!-- Chart Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <span id="imp-chart-title" class="panel-title">CO(GT) Sensor Telemetry Timeline</span>
+          <span class="panel-subtitle" style="display: flex; align-items: center; gap: 0.75rem;">
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem;">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #EF4444; border: 1.5px solid #fff; display: inline-block;"></span>
+              <strong style="color: #EF4444;">RED</strong> = Missing Sensor Gaps
+            </span>
+            <span style="color: var(--text-muted);">&bull;</span>
+            <span style="display: inline-flex; align-items: center; gap: 0.35rem;">
+              <span style="width: 6px; height: 6px; border-radius: 50%; background: #4ADE80; display: inline-block;"></span>
+              <strong style="color: #4ADE80;">GREEN</strong> = Measured
+            </span>
+          </span>
+        </div>
+        <div style="height: 380px; position: relative;">
+          <canvas id="imputation-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Live Metrics Instrument Panel -->
+      <div class="panel" style="display: flex; flex-direction: column; justify-content: space-between;">
+        <div>
+          <div class="panel-header">
+            <span class="panel-title">Pipeline Status</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1.5rem; margin-top: 1rem;">
+
+            <!-- Live Counter of Values Filled -->
+            <div class="metric-box" style="background: var(--bg-muted); padding: 1.25rem; border: 1px solid var(--border-color); border-radius: var(--border-radius);">
+              <span class="metric-label">Values Imputed (Staggered)</span>
+              <div style="display: flex; align-items: baseline; gap: 0.5rem; margin-top: 0.25rem;">
+                <span id="imp-filled-counter" class="metric-value mono-count aqi-color-good" style="font-size: 2.8rem;">0</span>
+                <span id="imp-total-missing-label" style="font-family: var(--font-mono); font-size: 0.9rem; color: var(--text-secondary);">/ -- missing</span>
+              </div>
+            </div>
+
+            <!-- MAE Metric -->
+            <div class="metric-box">
+              <span class="metric-label">Mean Absolute Error (MAE)</span>
+              <div style="display: flex; align-items: baseline; gap: 0.4rem; margin-top: 0.25rem;">
+                <span id="imp-mae-value" class="metric-value mono-count">--</span>
+                <span id="imp-mae-unit" style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-secondary);">mg/m³</span>
+              </div>
+            </div>
+
+            <!-- Method Description -->
+            <div class="readout-box" style="margin-top: 0.5rem;">
+              <div class="readout-title">Method Mechanics</div>
+              <p id="imp-method-desc" class="readout-text">
+                Uses similarity across temporal distance and co-pollutants to preserve realistic diurnal trend curves.
+              </p>
+            </div>
+
+          </div>
+        </div>
+
+        <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid var(--hairline-light); padding-top: 0.75rem;">
+          Stagger interval: ~65ms &bull; Smooth point interpolation enabled
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="instrument-footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <strong>B.TECH ML PROJECT</strong> &bull; Imputation Engine
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const data = await fetch('../data/imputation_results.json').then(r => r.json());
+        const canvas = document.getElementById('imputation-chart');
+        window.imputationMgr = new ImputationManager(canvas, data);
+      } catch (err) {
+        console.error("Error loading imputation JSON:", err);
+      }
+    });
+  </script>
+
+</body>
+</html>

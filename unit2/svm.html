@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVM Air Quality Classification | Urban Air Quality Profiling</title>
+  <meta name="description" content="Support Vector Machine (SVM) Classification for Urban Air Quality Hazard Categories.">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  <script src="../assets/gauge.js" defer></script>
+  <script src="../assets/charts.js" defer></script>
+</head>
+<body>
+
+  <!-- Persistent Navigation -->
+  <nav class="instrument-nav">
+    <a href="../index.html" class="nav-brand">
+      <span class="status-dot"></span>
+      <span class="nav-brand-text">AQI PROFILER</span>
+      <span class="nav-brand-sub">SVM CLASSIFICATION</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../index.html">Overview</a></li>
+      <li><a href="index.html">Unit 2 Overview</a></li>
+      <li><a href="ridge.html">Ridge Regression</a></li>
+      <li><a href="svm.html" class="active">SVM Classification</a></li>
+    </ul>
+    <!-- Persistent Live Nav AQI Chip -->
+    <a href="../unit1/imputation.html" class="nav-aqi-chip" title="Live Instrument Reading">
+      <canvas id="nav-aqi-canvas"></canvas>
+      <span id="nav-aqi-val" class="nav-aqi-val">--</span>
+      <span id="nav-aqi-label" class="nav-aqi-status">--</span>
+    </a>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-wrapper">
+
+    <!-- Page Header -->
+    <header class="page-header">
+      <div class="breadcrumb">
+        <a href="../index.html">Syllabus Overview</a> / <a href="index.html">Unit 2</a> / <span>SVM Classification</span>
+      </div>
+      <h1 class="page-title">SVM Air Quality Hazard Classification</h1>
+      <p class="page-subtitle">
+        Classifying atmospheric CO(GT) sensor concentrations into Safe, Moderate, and Hazardous hazard categories. Compare Linear decision hyperplanes against non-linear Radial Basis Function (RBF) kernels across 6 multi-sensor features.
+      </p>
+    </header>
+
+    <!-- Category Thresholds Reference Banner -->
+    <section class="instrument-card" style="margin-bottom: 1.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div>
+          <h3 class="card-title" style="font-size: 0.95rem; text-transform: uppercase;">
+            AQI Category Thresholds (CO(GT) Concentration)
+          </h3>
+          <p style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 0.2rem;">
+            Target classes partitioned directly from raw sensor telemetry limits (mg/m³).
+          </p>
+        </div>
+        <div style="display: flex; gap: 1rem; flex-wrap: wrap;" id="svm-thresholds-container">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Kernel Selector Toolbar -->
+    <section class="instrument-card" style="margin-bottom: 1.5rem; padding: 1.25rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div>
+          <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em;">
+            SVM KERNEL ARCHITECTURE:
+          </span>
+          <span id="svm-kernel-display" style="font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; color: var(--aqi-good); margin-left: 0.5rem;">
+            Linear Kernel
+          </span>
+        </div>
+
+        <div class="segmented-control">
+          <button class="svm-kernel-btn imp-tab-btn active" data-kernel="linear">Linear Kernel</button>
+          <button class="svm-kernel-btn imp-tab-btn" data-kernel="rbf">RBF Kernel (Non-Linear)</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Performance Metric Cards -->
+    <div class="grid-3" style="margin-bottom: 1.5rem;">
+      <div class="stat-card">
+        <div class="stat-label">OVERALL TEST ACCURACY</div>
+        <div class="stat-value" id="svm-accuracy" style="color: var(--aqi-good);">--</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;" id="svm-accuracy-sub">n = 1,469 Test Samples</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-label">BEST CLASS F1-SCORE</div>
+        <div class="stat-value" id="svm-best-f1" style="color: var(--text-primary);">--</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;" id="svm-best-f1-class">Highest precision/recall trade-off</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-label">FEATURE DIMENSIONALITY</div>
+        <div class="stat-value" style="color: var(--text-secondary);">6D</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;">T, RH, AH, PT08.S1, PT08.S3, Hour</div>
+      </div>
+    </div>
+
+    <!-- Per-Class Metrics & 3x3 Confusion Matrix Heatmap -->
+    <div class="grid-2" style="margin-bottom: 1.5rem;">
+
+      <!-- Left Panel: Per-Class Table -->
+      <div class="chart-panel">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <h3 class="chart-title">PER-CLASS PRECISION, RECALL & F1-SCORE</h3>
+          <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted);">Validation Split</span>
+        </div>
+        <div style="overflow-x: auto;">
+          <table style="width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.85rem;" id="svm-metrics-table">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--border-color); text-align: left; color: var(--text-muted);">
+                <th style="padding: 0.6rem;">CATEGORY</th>
+                <th style="padding: 0.6rem;">PRECISION</th>
+                <th style="padding: 0.6rem;">RECALL</th>
+                <th style="padding: 0.6rem;">F1-SCORE</th>
+                <th style="padding: 0.6rem;">SUPPORT</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Right Panel: 3x3 Confusion Matrix Grid -->
+      <div class="chart-panel">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <h3 class="chart-title">3×3 CONFUSION MATRIX HEATMAP</h3>
+          <span style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted);">Rows: Actual • Cols: Predicted</span>
+        </div>
+        
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 220px;">
+          <div id="svm-matrix-grid" style="display: grid; grid-template-columns: auto repeat(3, 1fr); gap: 6px; width: 100%; max-width: 440px; margin: 0 auto; font-family: var(--font-mono);">
+            <!-- Dynamically populated 3x3 heatmap -->
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 2D PCA Decision Boundary Visualization Canvas -->
+    <section class="chart-panel" style="margin-bottom: 1.5rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+        <div>
+          <h3 class="chart-title" style="font-size: 1rem;">2D PCA DECISION BOUNDARY & REGION PLOT</h3>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem;" id="svm-boundary-note">
+            PCA-reduced to 2D for visualization only; accuracy metrics above use all features
+          </div>
+        </div>
+        <div style="display: flex; gap: 1rem; font-family: var(--font-mono); font-size: 0.75rem;">
+          <span style="display: flex; align-items: center; gap: 0.35rem;">
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: #4ADE80; display: inline-block;"></span> Safe
+          </span>
+          <span style="display: flex; align-items: center; gap: 0.35rem;">
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: #FBBF24; display: inline-block;"></span> Moderate
+          </span>
+          <span style="display: flex; align-items: center; gap: 0.35rem;">
+            <span style="width: 10px; height: 10px; border-radius: 50%; background: #FB7185; display: inline-block;"></span> Hazardous
+          </span>
+        </div>
+      </div>
+
+      <div class="chart-wrapper" style="height: 380px; position: relative;">
+        <canvas id="svm-decision-canvas" style="width: 100%; height: 100%; display: block; border-radius: 4px;"></canvas>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Instrument Footer -->
+  <footer class="instrument-footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <strong>B.TECH 3RD YEAR MACHINE LEARNING SUBJECT PROJECT</strong><br>
+        Unit 2: SVM Classification Module
+      </div>
+      <div style="font-family: var(--font-mono); font-size: 0.8rem;">
+        Urban Air Quality Profiling
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const res = await fetch('../data/svm_results.json');
+        const svmData = await res.json();
+        if (typeof SVMManager !== 'undefined') {
+          window.svmMgr = new SVMManager(svmData);
+        }
+      } catch (err) {
+        console.error("Failed loading svm_results.json:", err);
+      }
+    });
+  </script>
+
+</body>
+</html>

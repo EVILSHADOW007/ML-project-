@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Urban Air Quality Profiling | ML Subject Project</title>
+  <meta name="description" content="B.Tech 3rd-Year ML Subject Project: Urban Air Quality Profiling using Imputation, Covariance Analysis, and Polynomial Curve Fitting.">
+  <link rel="stylesheet" href="assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  <script src="assets/gauge.js" defer></script>
+  <script src="assets/charts.js" defer></script>
+</head>
+<body>
+
+  <!-- Persistent Instrument Navigation -->
+  <nav class="instrument-nav">
+    <a href="index.html" class="nav-brand">
+      <span class="status-dot"></span>
+      <span class="nav-brand-text">AQI PROFILER</span>
+      <span class="nav-brand-sub">B.TECH ML PROJECT</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="index.html" class="active">Overview</a></li>
+      <li><a href="unit1/index.html">Unit 1</a></li>
+      <li><a href="unit2/index.html">Unit 2</a></li>
+      <li><a href="#syllabus-grid" class="text-muted">Units 3-5 (Locked)</a></li>
+    </ul>
+    <!-- Persistent Live Nav AQI Chip -->
+    <a href="unit1/imputation.html" class="nav-aqi-chip" title="Live Instrument Reading">
+      <canvas id="nav-aqi-canvas"></canvas>
+      <span id="nav-aqi-val" class="nav-aqi-val">--</span>
+      <span id="nav-aqi-label" class="nav-aqi-status">--</span>
+    </a>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-wrapper">
+
+    <!-- Hero Instrument Panel (Not a marketing hero - live monitoring dial) -->
+    <section class="hero-instrument">
+      <div class="hero-content">
+        <div class="hero-badge">
+          <span>●</span> Live UCI Air Quality Dataset (9,357 Telemetry Records)
+        </div>
+        <h1 class="hero-title">Urban Air Quality Profiling</h1>
+        <p class="hero-desc">
+          B.Tech 3rd-Year Machine Learning subject project analyzing hourly chemical multisensor telemetry (CO, NO2, NOx, Benzene C6H6, NMHC), pollutant co-dependence, predictive curve fitting, Ridge regression stability, and SVM hazard classification based exclusively on the UCI Air Quality dataset.
+        </p>
+        <div style="margin-top: 1rem; display: flex; gap: 1rem; flex-wrap: wrap;">
+          <a href="unit1/index.html" class="btn-instrument btn-instrument-primary">
+            Explore Unit 1 Algorithms &rarr;
+          </a>
+          <a href="unit2/index.html" class="btn-instrument btn-instrument-primary">
+            Explore Unit 2 Algorithms &rarr;
+          </a>
+        </div>
+      </div>
+
+      <!-- Characteristic Hero AQI Dial Gauge -->
+      <div class="hero-gauge-container">
+        <canvas id="hero-aqi-gauge" style="width: 220px; height: 220px;"></canvas>
+        <div style="text-align: center; margin-top: 0.75rem;">
+          <div style="font-family: var(--font-mono); font-size: 2.2rem; font-weight: 700; line-height: 1;" id="hero-aqi-num">--</div>
+          <div style="font-family: var(--font-ui); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.25rem;" id="hero-aqi-cat">INITIATING SENSOR</div>
+          <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); margin-top: 0.4rem;">Hourly Telemetry Sweep • Air Quality Index</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Syllabus Unit Grid Section -->
+    <section id="syllabus-grid">
+      <div class="page-header" style="margin-bottom: 1.5rem;">
+        <h2 class="page-title" style="font-size: 1.5rem;">Syllabus Units Breakdown</h2>
+        <p class="page-subtitle">Units 1 & 2 are fully implemented with interactive ML pipelines. Units 3-5 exist as syllabus placeholders.</p>
+      </div>
+
+      <div class="grid-5">
+
+        <!-- Unit 1: Active -->
+        <a href="unit1/index.html" class="unit-card active">
+          <div>
+            <div class="unit-number">UNIT 01 <span>[READY]</span></div>
+            <h3 class="unit-title">Urban Air Quality Profiling</h3>
+            <p class="unit-desc">Imputation (Mean, Median, KNN), Covariance & Co-dependence, and Polynomial Curve Fitting.</p>
+          </div>
+          <div class="unit-status-tag active">
+            ● Interactive Module
+          </div>
+        </a>
+
+        <!-- Unit 2: Active -->
+        <a href="unit2/index.html" class="unit-card active">
+          <div>
+            <div class="unit-number">UNIT 02 <span>[READY]</span></div>
+            <h3 class="unit-title">Regression & Classification</h3>
+            <p class="unit-desc">Ridge Regression (multicollinearity & coefficient sign flips) and SVM Classification (Safe / Moderate / Hazardous).</p>
+          </div>
+          <div class="unit-status-tag active">
+            ● Interactive Module
+          </div>
+        </a>
+
+        <!-- Unit 3: Locked -->
+        <div class="unit-card locked">
+          <div>
+            <div class="unit-number">UNIT 03 <span>🔒</span></div>
+            <h3 class="unit-title">Unsupervised Clustering</h3>
+            <p class="unit-desc">K-Means and DBSCAN spatial partitioning for urban industrial pollution hotspots.</p>
+          </div>
+          <div class="unit-status-tag locked">
+            🔒 Locked Placeholder
+          </div>
+        </div>
+
+        <!-- Unit 4: Locked -->
+        <div class="unit-card locked">
+          <div>
+            <div class="unit-number">UNIT 04 <span>🔒</span></div>
+            <h3 class="unit-title">Time Series Forecasting</h3>
+            <p class="unit-desc">ARIMA, Prophet, and LSTM recurrent networks for multi-day pollution trend projection.</p>
+          </div>
+          <div class="unit-status-tag locked">
+            🔒 Locked Placeholder
+          </div>
+        </div>
+
+        <!-- Unit 5: Locked -->
+        <div class="unit-card locked">
+          <div>
+            <div class="unit-number">UNIT 05 <span>🔒</span></div>
+            <h3 class="unit-title">Neural Networks & Deep ML</h3>
+            <p class="unit-desc">Convolutional & Transformer architectures for multi-city satellite aerosol monitoring.</p>
+          </div>
+          <div class="unit-status-tag locked">
+            🔒 Locked Placeholder
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Instrument Footer -->
+  <footer class="instrument-footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <strong>B.TECH 3RD YEAR MACHINE LEARNING SUBJECT PROJECT</strong><br>
+        Topic: Urban Air Quality Profiling using Imputation, Covariance, and Polynomial Curve Fitting
+      </div>
+      <div style="font-family: var(--font-mono); font-size: 0.8rem;">
+        Developed for Academic Evaluation &bull; Department of Computer Science & Engineering
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // Initialize Hero Gauge Sweep
+      const heroCanvas = document.getElementById('hero-aqi-gauge');
+      const heroNum = document.getElementById('hero-aqi-num');
+      const heroCat = document.getElementById('hero-aqi-cat');
+
+      if (heroCanvas) {
+        window.heroGauge = new AQIGauge({
+          canvas: heroCanvas,
+          valueEl: heroNum,
+          labelEl: heroCat,
+          isMini: false
+        });
+      }
+    });
+  </script>
+
+</body>
+</html>

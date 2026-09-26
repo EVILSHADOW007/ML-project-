@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Polynomial Curve Fitting | Urban Air Quality Profiling</title>
+  <meta name="description" content="Polynomial Curve Fitting Module: Interactive degree slider (1-4), smooth curve morphing, R2 / RMSE count-up animation, and held-out validation overfitting analysis.">
+  <link rel="stylesheet" href="../assets/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+  <script src="../assets/gauge.js" defer></script>
+  <script src="../assets/charts.js" defer></script>
+</head>
+<body>
+
+  <!-- Persistent Navigation -->
+  <nav class="instrument-nav">
+    <a href="../index.html" class="nav-brand">
+      <span class="status-dot"></span>
+      <span class="nav-brand-text">AQI PROFILER</span>
+      <span class="nav-brand-sub">POLYFIT</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="../index.html">Overview</a></li>
+      <li><a href="index.html">Unit 1 Overview</a></li>
+      <li><a href="../unit2/index.html">Unit 2</a></li>
+      <li><a href="imputation.html">Imputation</a></li>
+      <li><a href="covariance.html">Covariance</a></li>
+      <li><a href="polynomial.html" class="active">Polyfit</a></li>
+    </ul>
+    <!-- Persistent Live Nav AQI Chip -->
+    <a href="imputation.html" class="nav-aqi-chip">
+      <canvas id="nav-aqi-canvas"></canvas>
+      <span id="nav-aqi-val" class="nav-aqi-val">--</span>
+      <span id="nav-aqi-label" class="nav-aqi-status">--</span>
+    </a>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="main-wrapper">
+
+    <!-- Page Header -->
+    <header class="page-header">
+      <div class="breadcrumb">
+        <a href="../index.html">Home</a> / <a href="index.html">Unit 1</a> / <span>Polynomial Curve Fitting</span>
+      </div>
+      <h1 class="page-title">Polynomial Curve Fitting & Overfitting Analysis</h1>
+      <p class="page-subtitle">
+        Fit polynomial curves y = &sum; a<sub>i</sub>x<sup>i</sup> to 24-hour diurnal NO2 readings. Drag the slider to observe real-time curve morphing and trade-offs between training fit (R²) and held-out test error (RMSE).
+      </p>
+    </header>
+
+    <!-- Control Bar with Slider & Segmented Controls -->
+    <div class="control-bar">
+      <div style="display: flex; align-items: center; gap: 1rem; width: 100%;">
+        <span style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-secondary); text-transform: uppercase;">
+          Polynomial Degree: <strong id="poly-degree-display" style="color: var(--aqi-good); font-size: 1.1rem;">3</strong>
+        </span>
+
+        <!-- Segmented Quick Degree Buttons -->
+        <div class="segmented-control" style="margin-left: 0.5rem;">
+          <button class="segmented-btn poly-degree-btn" data-degree="1">Degree 1</button>
+          <button class="segmented-btn poly-degree-btn" data-degree="2">Degree 2</button>
+          <button class="segmented-btn poly-degree-btn active" data-degree="3">Degree 3</button>
+          <button class="segmented-btn poly-degree-btn" data-degree="4">Degree 4</button>
+        </div>
+
+        <!-- Continuous Slider Control -->
+        <div class="slider-container" style="margin-left: auto;">
+          <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);">1</span>
+          <input type="range" id="poly-degree-slider" class="degree-slider" min="1" max="4" step="1" value="3">
+          <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);">4</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Grid: Chart + Animated Metrics Instrument Panel -->
+    <div class="grid-2" style="grid-template-columns: 2.2fr 1fr;">
+
+      <!-- Chart Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <span id="poly-chart-title" class="panel-title">NO2 Diurnal Concentration Curve Fit</span>
+          <span class="panel-subtitle">SMOOTH CURVE MORPHING ENABLED</span>
+        </div>
+        <div style="height: 380px; position: relative;">
+          <canvas id="polyfit-chart"></canvas>
+        </div>
+
+        <!-- Dynamic Plain-Language Readout Box (Derived dynamically from JSON values) -->
+        <div class="readout-box">
+          <div class="readout-title">Model Performance & Overfitting Readout</div>
+          <p id="poly-dynamic-readout" class="readout-text">
+            Degree 3 fits the dual daily rush-hour peaks best (R² = 0.932) with lowest validation error (held-out RMSE = 5.18).
+          </p>
+        </div>
+      </div>
+
+      <!-- Live Metrics Instrument Panel -->
+      <div class="panel" style="display: flex; flex-direction: column; justify-content: space-between;">
+        <div>
+          <div class="panel-header">
+            <span class="panel-title">Goodness of Fit</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 1.4rem; margin-top: 0.5rem;">
+
+            <!-- R² Metric -->
+            <div class="metric-box" style="background: var(--bg-muted); padding: 1rem 1.25rem; border: 1px solid var(--border-color); border-radius: var(--border-radius);">
+              <span class="metric-label">Coefficient of Determination (R²)</span>
+              <div id="poly-r2-val" class="metric-value mono-count aqi-color-good" style="font-size: 2.4rem; margin-top: 0.2rem;">
+                --
+              </div>
+            </div>
+
+            <!-- Training RMSE Metric -->
+            <div class="metric-box">
+              <span class="metric-label">Training RMSE</span>
+              <div style="display: flex; align-items: baseline; gap: 0.4rem; margin-top: 0.2rem;">
+                <span id="poly-rmse-val" class="metric-value mono-count">--</span>
+                <span style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-secondary);">µg/m³</span>
+              </div>
+            </div>
+
+            <!-- Held-Out Validation RMSE Metric -->
+            <div class="metric-box">
+              <span class="metric-label">Held-Out Test RMSE (Generalization)</span>
+              <div style="display: flex; align-items: baseline; gap: 0.4rem; margin-top: 0.2rem;">
+                <span id="poly-held-rmse-val" class="metric-value mono-count aqi-color-moderate">--</span>
+                <span style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-secondary);">µg/m³</span>
+              </div>
+            </div>
+
+            <!-- Derived Polynomial Equation -->
+            <div style="background: var(--bg-muted); border: 1px solid var(--border-color); padding: 0.8rem 1rem; border-radius: var(--border-radius);">
+              <span class="metric-label">Fitted Polynomial Equation</span>
+              <div id="poly-equation-val" style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-primary); margin-top: 0.4rem; word-break: break-all;">
+                --
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid var(--hairline-light); padding-top: 0.75rem;">
+          Chart.js smooth quadratic easing &bull; Real-time curve interpolation
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="instrument-footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <strong>B.TECH ML PROJECT</strong> &bull; Polynomial Curve Fitting Engine
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const data = await fetch('../data/polyfit_results.json').then(r => r.json());
+        const canvas = document.getElementById('polyfit-chart');
+        window.polyfitMgr = new PolyfitManager(canvas, data);
+      } catch (err) {
+        console.error("Error loading polyfit JSON:", err);
+      }
+    });
+  </script>
+
+</body>
+</html>
