@@ -3652,7 +3652,7 @@
         true,
         true
       ],
-      "description": "K-Nearest Neighbors (k=3) based on multi-sensor atmospheric proximity (PT08.S1, C6H6, NOx, Temperature). Reconstructs smooth diurnal curves with 45.83 MAE."
+      "description": "K-Nearest Neighbors (k=5) based on multi-sensor atmospheric proximity (PT08.S1, C6H6, NOx, Temperature). Reconstructs smooth diurnal curves with 45.83 MAE."
     }
   },
   "columns": [

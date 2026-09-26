@@ -413,7 +413,7 @@ class ImputationManager {
     if (this.maeUnitEl) this.maeUnitEl.textContent = colName.includes("CO") ? "mg/m³" : "µg/m³";
 
     const descMap = {
-      knn: "K-Nearest Neighbors (k=3) evaluates multi-pollutant telemetry similarity across time to reconstruct realistic sensor dynamics.",
+      knn: "K-Nearest Neighbors (k=5) evaluates multi-pollutant telemetry similarity across time to reconstruct realistic sensor dynamics.",
       mean: "Mean imputation fills all missing gaps with the global channel average, reducing variance but flattening temporal peaks.",
       median: "Median imputation substitutes missing readings with the channel median, offering robust resistance against extreme spikes."
     };

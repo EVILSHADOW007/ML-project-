@@ -37,7 +37,7 @@ All models, statistical analyses, regressions, and classifications are derived *
 ├── index.html                   -> Landing Page: Animated AQI dial hero, 5-unit syllabus grid
 ├── unit1/
 │   ├── index.html               -> Unit 1 Overview: 3 algorithm cards with live dataset sparklines
-│   ├── imputation.html          -> Mean / Median / KNN (k=3) toggle, missing point pulse & staggered fill animation
+│   ├── imputation.html          -> Mean / Median / KNN (k=5) toggle, missing point pulse & staggered fill animation
 │   ├── covariance.html          -> Interactive 6×6 correlation heatmap, locked scatter detail, top-3 correlated pairs
 │   └── polynomial.html          -> Degree 1-4 slider, smooth curve morphing, R²/RMSE count-ups, dynamic copy
 ├── unit2/

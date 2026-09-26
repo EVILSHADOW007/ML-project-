@@ -136,7 +136,7 @@ def main():
     mae_mean = {c: round(float(np.mean(np.abs(eval_sample[c] - means[c]))), 3) for c in imp_cols}
     mae_median = {c: round(float(np.mean(np.abs(eval_sample[c] - medians[c]))), 3) for c in imp_cols}
     
-    # KNN Imputation (k=3)
+    # KNN Imputation (k=5)
     knn_imputer = KNNImputer(n_neighbors=3)
     # Train KNN imputer on a representative matrix of sensors + pollutants
     knn_features = ['CO(GT)', 'PT08.S1(CO)', 'C6H6(GT)', 'PT08.S2(NMHC)', 'NOx(GT)', 'PT08.S3(NOx)', 'NO2(GT)', 'T', 'RH']
@@ -207,7 +207,7 @@ def main():
                 'before': before_seq,
                 'after': after_knn,
                 'was_missing': was_missing,
-                'description': f"K-Nearest Neighbors (k=3) based on multi-sensor atmospheric proximity (PT08.S1, C6H6, NOx, Temperature). Reconstructs smooth diurnal curves with {overall_mae_knn:.2f} MAE."
+                'description': f"K-Nearest Neighbors (k=5) based on multi-sensor atmospheric proximity (PT08.S1, C6H6, NOx, Temperature). Reconstructs smooth diurnal curves with {overall_mae_knn:.2f} MAE."
             }
         },
         'columns': imp_cols
