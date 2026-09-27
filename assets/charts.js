@@ -1089,7 +1089,7 @@ class RidgeManager {
             borderWidth: 1
           },
           {
-            label: 'Selected Penalty',
+            label: 'Ridge (α = 0)',
             data: [...olsCoefs],
             backgroundColor: 'rgba(251, 146, 60, 0.85)',
             borderColor: '#FB923C',
@@ -1140,9 +1140,7 @@ class RidgeManager {
       const predictors = this.data.predictors || Object.keys(olsModel.coefficients);
       const selectedCoefs = predictors.map(p => model.coefficients[p]);
 
-      const secondDatasetLabel = (model.alpha === 0 || modelKey === 'ols') 
-        ? 'OLS Baseline (Selected)' 
-        : `Ridge (α=${model.alpha})`;
+      const secondDatasetLabel = `Ridge (α = ${model.alpha})`;
 
       this.coefChart.data.datasets[1].label = secondDatasetLabel;
       this.coefChart.data.datasets[1].data = selectedCoefs;
