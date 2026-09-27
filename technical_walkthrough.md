@@ -1,5 +1,43 @@
 # Complete Technical Walkthrough — Urban Air Quality Profiling ML Project
 
+> [!IMPORTANT]
+> **This document describes the state of the project BEFORE the data-pipeline fix.**
+> The discrepancies it catalogues in Section 4 ("Hardcoded Numeric Literals"),
+> Section 8 ("Label vs Code Audit") and Section 9 ("Known Limitations") have since
+> been fixed. Line numbers and code excerpts below no longer match the sources.
+>
+> What changed:
+> - The Unit 1 imputation sparkline read `.time` / `.value` / `.is_missing` off a
+>   flat numeric array and rendered nothing; it now reads the array positionally.
+> - The Unit 1 polyfit sparkline plotted the 100 fitted-curve values against a
+>   category axis of 300 randomly ordered hours; both series now share one linear
+>   hour axis.
+> - The covariance scatter panel reported the all-column complete-case count for
+>   every pair, and fabricated sin/cos points for any pair missing from
+>   `scatter_data` (including the whole heatmap diagonal). It now reports the
+>   pairwise-complete count and plots real readings for every cell.
+> - `KNNImputer(n_neighbors=3)` is now `n_neighbors=5`, matching every `k=5` label.
+> - Mean/Median MAE was measured over all holdout values while KNN MAE was measured
+>   over only the 15% masked cells of a 3-column matrix. All three are now scored on
+>   the same masked cells of the same 9-channel matrix.
+> - The imputation panel showed the mean of three MAEs measured in mg/m³, ppb and
+>   µg/m³; it now shows the plotted column's own MAE.
+> - `StandardScaler` was fitted on the full matrix before the train/test split in
+>   both Ridge and SVM; it is now fitted on the training split only.
+> - The SVM boundary plot was labelled "2D PCA" but used two raw channels, had no
+>   axes, and always drew the RBF grid regardless of the selected kernel. It is now
+>   correctly labelled, axed, and computed per kernel.
+> - The OLS collinearity readout, the "RBF Kernel Accuracy", the top correlated
+>   pair, the test-sample counts and the y = x reference line were hard-coded; all
+>   are now derived from the results files.
+> - Polynomial `curve_points` stored `x` rounded to 2 dp but `y` evaluated at the
+>   unrounded `x`, so each point sat slightly off its own label.
+> - The AQI gauge displayed a synthetic 40–185 sine sweep labelled as live
+>   telemetry. It now steps through the real EPA CO index of the CSV's 8-hour
+>   running means, and reads `--` if the data file is unavailable.
+>
+> `tests/verify_graph_data.mjs` now guards all of the above against the raw CSV.
+
 ---
 
 ## 1. PROJECT STRUCTURE

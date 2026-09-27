@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SVM Air Quality Classification | Urban Air Quality Profiling</title>
   <meta name="description" content="Support Vector Machine (SVM) Classification for Urban Air Quality Hazard Categories.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%2309090b'/%3E%3Cpath d='M7 22a10 10 0 0 1 18 0' fill='none' stroke='%2334d399' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M16 21 L22 13' stroke='%23fafafa' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='21' r='2' fill='%2334d399'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
   <script src="../assets/gauge.js" defer></script>
@@ -88,7 +89,7 @@
       <div class="stat-card">
         <div class="stat-label">OVERALL TEST ACCURACY</div>
         <div class="stat-value" id="svm-accuracy" style="color: var(--aqi-good);">--</div>
-        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;" id="svm-accuracy-sub">n = 1,469 Test Samples</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;" id="svm-accuracy-sub">n = -- Test Samples</div>
       </div>
 
       <div class="stat-card">
@@ -99,8 +100,8 @@
 
       <div class="stat-card">
         <div class="stat-label">FEATURE DIMENSIONALITY</div>
-        <div class="stat-value" style="color: var(--text-secondary);">6D</div>
-        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;">T, RH, AH, PT08.S1, PT08.S3, Hour</div>
+        <div class="stat-value" style="color: var(--text-secondary);" id="svm-dim-value">--</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem;" id="svm-dim-list">--</div>
       </div>
     </div>
 
@@ -147,13 +148,13 @@
 
     </div>
 
-    <!-- 2D PCA Decision Boundary Visualization Canvas -->
-    <section class="chart-panel" style="margin-bottom: 1.5rem;">
+    <!-- 2D Decision Boundary Visualization Canvas (two raw sensor channels) -->
+    <section class="chart-panel" style="margin-bottom: 1.5rem;" id="svm-boundary-panel">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
         <div>
-          <h3 class="chart-title" style="font-size: 1rem;">2D PCA DECISION BOUNDARY & REGION PLOT</h3>
+          <h3 class="chart-title" style="font-size: 1rem;" id="svm-boundary-title">2D DECISION BOUNDARY & REGION PLOT</h3>
           <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem;" id="svm-boundary-note">
-            PCA-reduced to 2D for visualization only; accuracy metrics above use all features
+            Loading boundary features from data/svm_results.json…
           </div>
         </div>
         <div style="display: flex; gap: 1rem; font-family: var(--font-mono); font-size: 0.75rem;">
