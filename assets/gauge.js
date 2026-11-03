@@ -1,7 +1,35 @@
 /**
  * AQI Gauge Engine
- * Real-time animated AQI circular dial/gauge supporting hero display and nav chip
+ * Animated AQI circular dial/gauge supporting hero display and nav chip.
+ *
+ * The dial steps through REAL consecutive hourly readings from
+ * data/AirQualityUCI.csv: data/overview_results.json carries a sweep of the
+ * US EPA carbon-monoxide AQI computed from the 8-hour running mean of CO(GT).
+ * If that file cannot be loaded the dial reads "--" rather than inventing values.
  */
+
+// Resolve data/ relative to this script's own URL, so the same file works from
+// the site root and from unit1/ and unit2/ subdirectories.
+const AQI_DATA_URL = (() => {
+  try {
+    const self = document.currentScript && document.currentScript.src;
+    if (self) return new URL('../data/overview_results.json', self).href;
+  } catch (err) {
+    /* fall through */
+  }
+  return 'data/overview_results.json';
+})();
+
+let aqiOverviewPromise = null;
+
+function loadAQIOverview() {
+  if (!aqiOverviewPromise) {
+    aqiOverviewPromise = fetch(AQI_DATA_URL)
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null);
+  }
+  return aqiOverviewPromise;
+}
 
 class AQIGauge {
   /**
@@ -20,7 +48,13 @@ class AQIGauge {
 
     this.minVal = 0;
     this.maxVal = 300;
-    this.currentVal = 40;
+    this.currentVal = null;
+
+    // Dataset-derived sweep, filled in by loadAQIOverview().
+    this.sweep = [];
+    this.sweepIndex = 0;
+    this.sweepTimer = null;
+    this.readingEl = config.readingEl || null;
 
     // AQI Breakpoints & Colors
     this.scales = [
@@ -49,10 +83,51 @@ class AQIGauge {
   init() {
     this.resize();
     window.addEventListener('resize', () => this.resize());
-    if (!this.reducedMotion) {
-      this.startLoop();
-    } else {
-      this.setValue(68);
+
+    loadAQIOverview().then(overview => {
+      const sweep = (overview && overview.aqi && Array.isArray(overview.aqi.sweep))
+        ? overview.aqi.sweep.filter(s => typeof s.aqi === 'number')
+        : [];
+
+      if (!sweep.length) {
+        this.showNoData();
+        return;
+      }
+
+      this.sweep = sweep;
+      this.aqiMeta = overview.aqi;
+      this.showReading(0);
+
+      if (!this.reducedMotion) {
+        this.startLoop();
+      }
+    });
+  }
+
+  showNoData() {
+    this.currentVal = null;
+    if (this.valueEl) {
+      this.valueEl.textContent = '--';
+      this.valueEl.style.color = '';
+    }
+    if (this.labelEl) {
+      this.labelEl.textContent = this.isMini ? 'NO DATA' : 'DATASET UNAVAILABLE';
+      this.labelEl.style.color = '';
+    }
+    this.draw(0);
+  }
+
+  /** Show sweep entry `idx` - a genuine hourly reading from the CSV. */
+  showReading(idx) {
+    if (!this.sweep.length) return;
+    this.sweepIndex = ((idx % this.sweep.length) + this.sweep.length) % this.sweep.length;
+    const entry = this.sweep[this.sweepIndex];
+    this.setValue(entry.aqi);
+    if (this.readingEl) {
+      const co = entry.co_8h_mg_m3;
+      this.readingEl.textContent = co === null || co === undefined
+        ? entry.timestamp
+        : `${entry.timestamp} \u2022 CO 8-h mean ${co.toFixed(2)} mg/m\u00b3`;
     }
   }
 
@@ -64,8 +139,9 @@ class AQIGauge {
 
     this.canvas.width = this.width * dpr;
     this.canvas.height = this.height * dpr;
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.scale(dpr, dpr);
-    this.draw(this.currentVal);
+    this.draw(this.currentVal === null ? 0 : this.currentVal);
   }
 
   setValue(val) {
@@ -85,27 +161,22 @@ class AQIGauge {
     this.draw(this.currentVal);
   }
 
-  startLoop() {
+  /** Advance one real hourly reading at a time through the dataset sweep. */
+  startLoop(intervalMs = 700) {
+    if (!this.sweep.length) return;
+    this.stopLoop();
     this.animating = true;
-    const animate = (timestamp) => {
-      if (!this.startTime) this.startTime = timestamp;
-      const elapsed = timestamp - this.startTime;
-
-      // 8-second cycle sweep between 40 and 185
-      const period = 8000;
-      const sinFactor = (Math.sin((elapsed / period) * 2 * Math.PI - Math.PI / 2) + 1) / 2; // 0 to 1
-      const val = 40 + sinFactor * (185 - 40);
-
-      this.setValue(val);
-      if (this.animating) {
-        requestAnimationFrame(animate);
-      }
-    };
-    requestAnimationFrame(animate);
+    this.sweepTimer = setInterval(() => {
+      this.showReading(this.sweepIndex + 1);
+    }, intervalMs);
   }
 
   stopLoop() {
     this.animating = false;
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
   }
 
   draw(val) {
@@ -246,4 +317,22 @@ document.addEventListener('DOMContentLoaded', () => {
       isMini: true
     });
   }
+
+  // Fill any dataset-summary placeholders on the page from the same file.
+  loadAQIOverview().then(overview => {
+    if (!overview) return;
+
+    const recEl = document.getElementById('dataset-record-count');
+    if (recEl) recEl.textContent = overview.record_count.toLocaleString();
+
+    const rangeEl = document.getElementById('dataset-date-range');
+    if (rangeEl && overview.date_range) {
+      rangeEl.textContent = `${overview.date_range.start} \u2013 ${overview.date_range.end}`;
+    }
+
+    const aqiRangeEl = document.getElementById('dataset-aqi-range');
+    if (aqiRangeEl && overview.aqi) {
+      aqiRangeEl.textContent = `AQI ${overview.aqi.min}\u2013${overview.aqi.max} (mean ${overview.aqi.mean})`;
+    }
+  });
 });

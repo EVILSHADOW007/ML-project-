@@ -18,7 +18,7 @@ if (typeof Chart !== 'undefined') {
 }
 
 /* Helper to count up numbers in JetBrains Mono font */
-function animateMonoNumber(el, start, end, duration = 600, decimals = 2) {
+function animateMonoNumber(el, start, end, duration = 600, decimals = 2, suffix = '') {
   if (!el) return;
   const startTime = performance.now();
   const step = (now) => {
@@ -26,7 +26,7 @@ function animateMonoNumber(el, start, end, duration = 600, decimals = 2) {
     const progress = Math.min(elapsed / duration, 1);
     const easeOut = 1 - Math.pow(1 - progress, 3);
     const val = start + (end - start) * easeOut;
-    el.textContent = val.toFixed(decimals);
+    el.textContent = val.toFixed(decimals) + suffix;
     if (progress < 1) {
       requestAnimationFrame(step);
     }
@@ -35,24 +35,249 @@ function animateMonoNumber(el, start, end, duration = 600, decimals = 2) {
 }
 
 /* ==========================================================================
+   0. PURE CHART-DATA PREPARATION
+   --------------------------------------------------------------------------
+   Every chart on the site gets its numbers from one of the functions below.
+   They are deliberately free of Chart.js and DOM references so they can be
+   asserted directly against data/AirQualityUCI.csv in tests/verify_graph_data.mjs.
+   ========================================================================== */
+
+/**
+ * Imputation timeline series.
+ * `after` / `before` are flat numeric arrays (null = sensor dropout) and
+ * `was_missing` is a parallel boolean array - there is no per-point object
+ * wrapper, so values must be read positionally.
+ */
+function buildImputationSeries(methodData, phase = 'after') {
+  if (!methodData) return { labels: [], values: [], missing: [], column: '', unit: '' };
+
+  const before = Array.isArray(methodData.before) ? methodData.before : [];
+  const after = Array.isArray(methodData.after) ? methodData.after : before;
+  const values = phase === 'before' ? before : after;
+
+  const missing = values.map((_, i) => {
+    if (Array.isArray(methodData.was_missing) && i < methodData.was_missing.length) {
+      return Boolean(methodData.was_missing[i]);
+    }
+    return before[i] === null || before[i] === undefined;
+  });
+
+  // Prefer the CSV's own Date + Time for the x-axis; fall back to a 1..N
+  // sample counter only when the results file carries no timestamps.
+  const stamps = Array.isArray(methodData.timestamps) ? methodData.timestamps : null;
+  const labels = values.map((_, i) => (stamps && stamps[i] !== undefined ? stamps[i] : i + 1));
+
+  return {
+    labels,
+    values: values.slice(),
+    missing,
+    column: methodData.chart_column || 'CO(GT)',
+    unit: methodData.chart_unit || '',
+    hasTimestamps: Boolean(stamps)
+  };
+}
+
+/** MAE for the column actually plotted (never the mixed-unit cross-column average). */
+function imputationChartMae(methodData) {
+  if (!methodData) return null;
+  const col = methodData.chart_column || 'CO(GT)';
+  const perCol = methodData.mae_per_column;
+  if (perCol && typeof perCol[col] === 'number') return perCol[col];
+  // A mixed-unit average must not be shown next to a single column's axis.
+  if (methodData.mae_is_mixed_unit_average) return null;
+  return typeof methodData.mae === 'number' ? methodData.mae : null;
+}
+
+/**
+ * Scatter points, Pearson r and the *pairwise complete* sample size for one
+ * pollutant pair. Returns points as {x,y} in (p1, p2) order.
+ */
+function resolvePairScatter(covData, p1, p2) {
+  const empty = { points: [], corr: null, n: null, plotted: 0, isIdentity: p1 === p2 };
+  if (!covData) return empty;
+
+  const pollutants = covData.pollutants || [];
+  const scatter = covData.scatter_data || {};
+  const key = `${p1}_${p2}`;
+  const reverseKey = `${p2}_${p1}`;
+
+  let points = null;
+  if (Array.isArray(scatter[key])) {
+    points = scatter[key];
+  } else if (Array.isArray(scatter[reverseKey])) {
+    points = scatter[reverseKey].map(pt => ({ x: pt.y, y: pt.x }));
+  } else if (Array.isArray(covData.top_pairs)) {
+    const match = covData.top_pairs.find(it =>
+      (it.a === p1 && it.b === p2) || (it.a === p2 && it.b === p1));
+    if (match && Array.isArray(match.scatter)) {
+      points = (match.a === p1 && match.b === p2)
+        ? match.scatter
+        : match.scatter.map(pt => ({ x: pt.y, y: pt.x }));
+    }
+  }
+
+  const i1 = pollutants.indexOf(p1);
+  const i2 = pollutants.indexOf(p2);
+  let corr = null;
+  if (p1 === p2) {
+    corr = 1;
+  } else if (covData.matrix && covData.matrix[i1] && typeof covData.matrix[i1][i2] === 'number') {
+    corr = covData.matrix[i1][i2];
+  }
+
+  // Sample size is per pair: pairwise-complete rows, not the all-column
+  // complete-case count (those differ by hundreds of rows).
+  const counts = covData.pair_counts || {};
+  let n = null;
+  if (typeof counts[key] === 'number') n = counts[key];
+  else if (typeof counts[reverseKey] === 'number') n = counts[reverseKey];
+
+  return {
+    points: points || [],
+    corr,
+    n,
+    plotted: (points || []).length,
+    isIdentity: p1 === p2
+  };
+}
+
+/** Polynomial fit: measured points and the fitted curve, both on a real hour axis. */
+function buildPolyfitDatasets(polyData, degree) {
+  const fallback = { actualPoints: [], curvePoints: [], xRange: [0, 23] };
+  if (!polyData || !polyData.degrees) return fallback;
+  const deg = polyData.degrees[String(degree)];
+  if (!deg) return fallback;
+  return {
+    actualPoints: (deg.actual_points || []).map(pt => ({ x: pt.x, y: pt.y })),
+    curvePoints: (deg.curve_points || []).map(pt => ({ x: pt.x, y: pt.y })),
+    xRange: polyData.x_range || [0, 23]
+  };
+}
+
+/** Predicted-vs-actual points plus a y = x reference line spanning the real data. */
+function buildPredVsActual(ridgeData) {
+  const sample = (ridgeData && ridgeData.pred_vs_actual_sample) || [];
+  const points = sample.map(d => ({ x: d.actual, y: d.predicted }));
+
+  let lo;
+  let hi;
+  if (ridgeData && Array.isArray(ridgeData.target_range) && ridgeData.target_range.length === 2) {
+    [lo, hi] = ridgeData.target_range;
+  } else if (points.length) {
+    const all = points.reduce((acc, pt) => acc.concat([pt.x, pt.y]), []);
+    lo = Math.min(...all);
+    hi = Math.max(...all);
+  } else {
+    lo = 0;
+    hi = 1;
+  }
+
+  return { points, refLine: [{ x: lo, y: lo }, { x: hi, y: hi }] };
+}
+
+/** Coefficient bars: OLS baseline vs the selected penalty, in predictor order. */
+function buildCoefSeries(ridgeData, modelKey) {
+  if (!ridgeData || !ridgeData.models || !ridgeData.models.ols) {
+    return { labels: [], ols: [], selected: [], alpha: null };
+  }
+  const ols = ridgeData.models.ols;
+  const model = ridgeData.models[modelKey] || ols;
+  const labels = ridgeData.predictors || Object.keys(ols.coefficients);
+  return {
+    labels: labels.slice(),
+    ols: labels.map(k => ols.coefficients[k]),
+    selected: labels.map(k => model.coefficients[k]),
+    alpha: model.alpha
+  };
+}
+
+/** The 2D decision-boundary grid belonging to the *selected* kernel. */
+function buildBoundaryGrid(svmData, kernel) {
+  const db = (svmData && svmData.decision_boundary_2d) || null;
+  if (!db) return null;
+
+  let grid = null;
+  if (db.kernels && db.kernels[kernel] && Array.isArray(db.kernels[kernel].grid_labels)) {
+    grid = db.kernels[kernel].grid_labels;
+  } else if (Array.isArray(db.grid_labels)) {
+    grid = db.grid_labels;
+  }
+  if (!grid) return null;
+
+  return {
+    grid,
+    resolution: db.grid_resolution || grid.length,
+    featureX: db.feature_x || '',
+    featureY: db.feature_y || '',
+    unitX: db.feature_x_unit || '',
+    unitY: db.feature_y_unit || '',
+    xRange: db.x_range || [0, 1],
+    yRange: db.y_range || [0, 1],
+    classOrder: db.class_order || (svmData && svmData.class_order) || ['Safe', 'Moderate', 'Hazardous'],
+    scatterPoints: db.scatter_points || [],
+    nFitSamples: db.n_fit_samples || null
+  };
+}
+
+/** Strongest correlated predictor pair + the two OLS weights it distorts. */
+function describeOlsCollinearity(ridgeData) {
+  if (!ridgeData || !ridgeData.models || !ridgeData.models.ols) return null;
+  const pairs = ridgeData.high_correlation_pairs || [];
+  if (!pairs.length) return null;
+
+  const top = pairs[0];
+  const coefs = ridgeData.models.ols.coefficients || {};
+  const predictors = ridgeData.predictors || Object.keys(coefs);
+
+  // The largest positive weight is the one the collinear partner counterbalances.
+  let inflated = null;
+  predictors.forEach(k => {
+    if (typeof coefs[k] !== 'number') return;
+    if (inflated === null || coefs[k] > coefs[inflated]) inflated = k;
+  });
+
+  // Prefer whichever side of the correlated pair carries the negative weight.
+  let suppressed = null;
+  [top.a, top.b].forEach(k => {
+    if (typeof coefs[k] === 'number' && coefs[k] < 0 && (suppressed === null || coefs[k] < coefs[suppressed])) {
+      suppressed = k;
+    }
+  });
+  if (suppressed === null) {
+    predictors.forEach(k => {
+      if (typeof coefs[k] !== 'number') return;
+      if (suppressed === null || coefs[k] < coefs[suppressed]) suppressed = k;
+    });
+  }
+
+  return {
+    pair: [top.a, top.b],
+    pairCorr: top.corr,
+    inflated: { name: inflated, coef: coefs[inflated] },
+    suppressed: { name: suppressed, coef: coefs[suppressed] }
+  };
+}
+
+/* ==========================================================================
    1. UNIT 1 OVERVIEW SPARKLINES
    ========================================================================== */
 function initUnit1Sparklines(imputationData, covarianceData, polyfitData) {
   // Sparkline 1: Imputation Preview
   const elImp = document.getElementById('sparkline-imputation');
-  if (elImp && imputationData) {
-    const knn = imputationData.methods.knn.after;
+  if (elImp && imputationData && imputationData.methods && imputationData.methods.knn) {
+    const series = buildImputationSeries(imputationData.methods.knn);
     new Chart(elImp.getContext('2d'), {
       type: 'line',
       data: {
-        labels: knn.map(d => d.time),
+        labels: series.labels,
         datasets: [{
-          data: knn.map(d => d.value),
+          data: series.values,
           borderColor: '#4ADE80',
           borderWidth: 1.5,
           tension: 0.3,
-          pointRadius: knn.map(d => d.is_missing ? 3 : 0),
-          pointBackgroundColor: knn.map(d => d.is_missing ? '#FB7185' : '#4ADE80')
+          spanGaps: true,
+          pointRadius: series.missing.map(m => (m ? 3 : 0)),
+          pointBackgroundColor: series.missing.map(m => (m ? '#FB7185' : '#4ADE80'))
         }]
       },
       options: {
@@ -62,17 +287,20 @@ function initUnit1Sparklines(imputationData, covarianceData, polyfitData) {
         scales: { x: { display: false }, y: { display: false } }
       }
     });
+
+    const impSubSpan = document.querySelector('#card-imputation .sparkline-container + div span:first-child');
+    if (impSubSpan) {
+      const missingInWindow = series.missing.filter(Boolean).length;
+      impSubSpan.textContent = `${series.column}: ${missingInWindow} gaps in ${series.values.length} readings`;
+    }
   }
 
   // Sparkline 2: Covariance Matrix Mini Preview
   const elCov = document.getElementById('sparkline-covariance');
   if (elCov && covarianceData) {
-    let pts = [];
-    if (covarianceData.top_pairs && covarianceData.top_pairs.length > 0) {
-      pts = covarianceData.top_pairs[0].scatter || [];
-    } else if (covarianceData.scatter_data) {
-      pts = covarianceData.scatter_data["PM2.5_PM10"] || Object.values(covarianceData.scatter_data)[0] || [];
-    }
+    const topPairs = covarianceData.top_pairs || [];
+    const topP = topPairs.length ? topPairs[0] : null;
+    const pts = topP ? resolvePairScatter(covarianceData, topP.a, topP.b).points : [];
 
     new Chart(elCov.getContext('2d'), {
       type: 'scatter',
@@ -91,31 +319,32 @@ function initUnit1Sparklines(imputationData, covarianceData, polyfitData) {
       }
     });
 
-    const topPairSpan = document.querySelector('#card-covariance .sparkline-container + div span');
-    if (topPairSpan && covarianceData.top_pairs && covarianceData.top_pairs.length > 0) {
-      const topP = covarianceData.top_pairs[0];
-      topPairSpan.textContent = `Top Corr: ${topP.a} ↔ ${topP.b} (${topP.corr >= 0 ? '+' : ''}${topP.corr.toFixed(2)})`;
+    const topPairSpan = document.querySelector('#card-covariance .sparkline-container + div span:first-child');
+    if (topPairSpan && topP) {
+      topPairSpan.textContent = `Top Corr: ${topP.a} \u2194 ${topP.b} (${topP.corr >= 0 ? '+' : ''}${topP.corr.toFixed(2)})`;
     }
   }
 
   // Sparkline 3: Polynomial Fit Preview
+  // Measured points and the fitted curve must share one linear hour axis - on a
+  // category axis the 100 curve samples would land on the first 100 randomly
+  // ordered scatter categories instead of hours 0-23.
   const elPoly = document.getElementById('sparkline-polyfit');
   if (elPoly && polyfitData) {
-    const deg3 = polyfitData.degrees["3"];
+    const { actualPoints, curvePoints, xRange } = buildPolyfitDatasets(polyfitData, 3);
     new Chart(elPoly.getContext('2d'), {
-      type: 'line',
+      type: 'scatter',
       data: {
-        labels: deg3.actual_points.map(p => p.x),
         datasets: [
           {
             type: 'scatter',
-            data: deg3.actual_points,
+            data: actualPoints,
             backgroundColor: '#94A3AD',
             pointRadius: 2
           },
           {
             type: 'line',
-            data: deg3.curve_points.map(p => p.y),
+            data: curvePoints,
             borderColor: '#FB923C',
             borderWidth: 1.5,
             tension: 0.4,
@@ -127,7 +356,10 @@ function initUnit1Sparklines(imputationData, covarianceData, polyfitData) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        scales: { x: { display: false }, y: { display: false } }
+        scales: {
+          x: { type: 'linear', display: false, min: xRange[0], max: xRange[1] },
+          y: { display: false }
+        }
       }
     });
   }
@@ -232,11 +464,17 @@ class ImputationManager {
     const methodData = this.getCurrentMethodData();
     if (!methodData) return;
 
-    const colName = methodData.chart_column || "CO(GT)";
-    const afterArr = methodData.after || methodData.before || [];
+    const series = buildImputationSeries(methodData);
+    const colName = series.column;
+    const unit = (series.unit || '')
+      .replace('mg/m3', 'mg/m³')
+      .replace('ug/m3', 'µg/m³');
+    const afterArr = series.values;
     const missingIndices = this.getMissingIndices(methodData);
     const totalMissing = missingIndices.length;
-    const labels = afterArr.map((_, i) => i + 1);
+    // Real reading times from the CSV's Date/Time columns when available.
+    const labels = series.labels;
+    const xAxisTitle = series.hasTimestamps ? 'Reading timestamp (Date HH:00)' : 'Sample Index / Sequence';
     const styles = this.getPointStyles(methodData);
 
     this.chart = new Chart(this.canvas.getContext('2d'), {
@@ -265,16 +503,18 @@ class ImputationManager {
         scales: {
           x: {
             grid: { color: 'rgba(148, 163, 173, 0.1)' },
-            title: { display: true, text: 'Sample Index / Sequence' }
+            title: { display: true, text: xAxisTitle },
+            ticks: { maxTicksLimit: 12, autoSkip: true }
           },
           y: {
             grid: { color: 'rgba(148, 163, 173, 0.1)' },
-            title: { display: true, text: `${colName} Concentration` }
+            title: { display: true, text: unit ? `${colName} (${unit})` : `${colName} Concentration` }
           }
         },
         plugins: {
           tooltip: {
             callbacks: {
+              title: (items) => (items.length ? String(items[0].label) : ''),
               label: (ctx) => {
                 const idx = ctx.dataIndex;
                 const isMissing = this.isIndexMissing(idx);
@@ -321,6 +561,7 @@ class ImputationManager {
       const colName = methodData.chart_column || "CO(GT)";
       const styles = this.getPointStyles(methodData);
 
+      this.chart.data.labels = buildImputationSeries(methodData).labels;
       this.chart.data.datasets[0].label = `${colName} Telemetry (${methodKey.toUpperCase()})`;
       this.chart.data.datasets[0].data = [...afterArr];
       this.chart.data.datasets[0].spanGaps = true;
@@ -402,22 +643,27 @@ class ImputationManager {
   }
 
   updateStats(methodData, totalMissing) {
-    const colName = methodData.chart_column || "CO(GT)";
-    const mae = methodData.mae_per_column 
-      ? (methodData.mae_per_column[colName] || methodData.mae) 
-      : methodData.mae;
+    const series = buildImputationSeries(methodData);
+    const colName = series.column;
+    // Always the plotted column's own MAE - the top-level `mae` averages three
+    // pollutants measured in different units and must not sit next to this axis.
+    const mae = imputationChartMae(methodData);
 
-    if (this.titleEl) this.titleEl.textContent = `${colName} Sensor Telemetry Timeline`;
+    const span = (this.data && this.data.window)
+      ? ` (${this.data.window.first_timestamp} \u2192 ${this.data.window.last_timestamp})`
+      : '';
+    if (this.titleEl) this.titleEl.textContent = `${colName} Sensor Telemetry Timeline${span}`;
     if (this.totalMissingEl) this.totalMissingEl.textContent = `/ ${totalMissing} missing in sample`;
-    if (this.maeEl) this.maeEl.textContent = typeof mae === 'number' ? mae.toFixed(2) : mae;
-    if (this.maeUnitEl) this.maeUnitEl.textContent = colName.includes("CO") ? "mg/m³" : "µg/m³";
+    if (this.maeEl) this.maeEl.textContent = typeof mae === 'number' ? mae.toFixed(2) : '--';
+    if (this.maeUnitEl) {
+      this.maeUnitEl.textContent = series.unit
+        ? series.unit.replace('mg/m3', 'mg/m³').replace('ug/m3', 'µg/m³')
+        : '';
+    }
 
-    const descMap = {
-      knn: "K-Nearest Neighbors (k=5) evaluates multi-pollutant telemetry similarity across time to reconstruct realistic sensor dynamics.",
-      mean: "Mean imputation fills all missing gaps with the global channel average, reducing variance but flattening temporal peaks.",
-      median: "Median imputation substitutes missing readings with the channel median, offering robust resistance against extreme spikes."
-    };
-    if (this.descEl) this.descEl.textContent = descMap[this.currentMethod] || methodData.description || "";
+    // Readout text comes from the results file, so the numbers it quotes are the
+    // ones computed from AirQualityUCI.csv.
+    if (this.descEl) this.descEl.textContent = methodData.description || '';
   }
 
   setupEvents() {
@@ -601,66 +847,20 @@ class CovarianceManager {
   updateScatterData(p1, p2) {
     if (!this.data) return;
 
-    let pts = null;
-    let pairCorr = null;
+    // Points, Pearson r and the pairwise-complete sample size all come from the
+    // results file. There is no synthetic fallback: a pair with no data shows an
+    // empty plot rather than fabricated points.
+    const resolved = resolvePairScatter(this.data, p1, p2);
+    const pts = resolved.points;
+    const corrVal = typeof resolved.corr === 'number' ? resolved.corr : null;
 
-    // 1. Check top_pairs array
-    if (this.data.top_pairs && Array.isArray(this.data.top_pairs)) {
-      const match = this.data.top_pairs.find(item => 
-        (item.a === p1 && item.b === p2) || (item.a === p2 && item.b === p1)
-      );
-      if (match) {
-        pairCorr = match.corr;
-        if (match.scatter && match.scatter.length > 0) {
-          if (match.a === p1 && match.b === p2) {
-            pts = match.scatter;
-          } else {
-            // Flip axes if requested in reverse order
-            pts = match.scatter.map(pt => ({ x: pt.y, y: pt.x }));
-          }
-        }
-      }
-    }
-
-    // 2. Fallback to scatter_data
-    if (!pts && this.data.scatter_data) {
-      const key = `${p1}_${p2}`;
-      const reverseKey = `${p2}_${p1}`;
-      if (this.data.scatter_data[key]) {
-        pts = this.data.scatter_data[key];
-      } else if (this.data.scatter_data[reverseKey]) {
-        pts = this.data.scatter_data[reverseKey].map(pt => ({ x: pt.y, y: pt.x }));
-      }
-    }
-
-    // 3. Look up Pearson r in correlation matrix if needed
-    const pollutants = this.data.pollutants || [];
-    const idx1 = pollutants.indexOf(p1);
-    const idx2 = pollutants.indexOf(p2);
-    const corrVal = (pairCorr !== null && pairCorr !== undefined) 
-      ? pairCorr 
-      : (idx1 !== -1 && idx2 !== -1 && this.data.matrix && this.data.matrix[idx1]) 
-        ? this.data.matrix[idx1][idx2] 
-        : (p1 === p2 ? 1.0 : 0.5);
-
-    // 4. Fallback generator if specific scatter array not present
-    if (!pts || pts.length === 0) {
-      pts = [];
-      const seedStr = `${p1}_${p2}`;
-      let seed = 0;
-      for (let i = 0; i < seedStr.length; i++) seed += seedStr.charCodeAt(i);
-
-      const count = 50;
-      for (let i = 0; i < count; i++) {
-        const p1R = Math.sin(seed + i * 1.7);
-        const p2R = Math.cos(seed + i * 2.3);
-        const xVal = 10 + (i / count) * 80 + p1R * 4;
-        const yVal = p1 === p2 
-          ? xVal + p2R * 0.1 
-          : 15 + (xVal * 0.7) * corrVal + p2R * 12 * (1 - Math.abs(corrVal));
-        pts.push({ x: parseFloat(xVal.toFixed(2)), y: parseFloat(yVal.toFixed(2)) });
-      }
-    }
+    const unitFor = (name) => {
+      const raw = (this.data.units && this.data.units[name]) || '';
+      if (!raw) return '';
+      return raw.replace('mg/m3', 'mg/m³').replace('ug/m3', 'µg/m³').replace('deg C', '°C');
+    };
+    const u1 = unitFor(p1) ? ` (${unitFor(p1)})` : '';
+    const u2 = unitFor(p2) ? ` (${unitFor(p2)})` : '';
 
     // DOM Updates
     const titleEl = document.getElementById('scatter-title');
@@ -672,24 +872,34 @@ class CovarianceManager {
     if (titleEl) titleEl.textContent = `${p1} vs ${p2} Scatter Analysis`;
 
     if (valEl) {
-      valEl.textContent = (corrVal >= 0 ? '+' : '') + corrVal.toFixed(2);
-      if (p1 === p2 || corrVal >= 0.7) valEl.className = 'metric-value mono-count aqi-color-good';
+      valEl.textContent = corrVal === null
+        ? '--'
+        : (corrVal >= 0 ? '+' : '') + corrVal.toFixed(2);
+      if (corrVal === null) valEl.className = 'metric-value mono-count';
+      else if (p1 === p2 || corrVal >= 0.7) valEl.className = 'metric-value mono-count aqi-color-good';
       else if (corrVal >= 0.4) valEl.className = 'metric-value mono-count aqi-color-moderate';
       else if (corrVal >= 0.1) valEl.className = 'metric-value mono-count aqi-color-sensitive';
       else if (corrVal > -0.1) valEl.className = 'metric-value mono-count';
       else valEl.className = 'metric-value mono-count aqi-color-unhealthy';
     }
 
-    // Real Sample Count
-    const totalN = this.data.n_rows_used || this.data.sample_count || pts.length;
+    // Sample size for THIS pair (pairwise-complete rows), not the all-column
+    // complete-case count - those differ by hundreds of readings.
     if (countEl) {
-      const plottedNote = (pts && pts.length < totalN) ? ` (${pts.length} plotted)` : '';
-      countEl.textContent = `Sample Count: n = ${totalN.toLocaleString()}${plottedNote}`;
+      if (typeof resolved.n === 'number') {
+        const plottedNote = pts.length && pts.length < resolved.n ? ` (${pts.length} plotted)` : '';
+        countEl.textContent = `Sample Count: n = ${resolved.n.toLocaleString()}${plottedNote}`;
+      } else {
+        countEl.textContent = 'Sample Count: n = --';
+      }
     }
 
     // Dynamic Correlation Label & Status Color
     if (labelEl) {
-      if (p1 === p2) {
+      if (corrVal === null) {
+        labelEl.textContent = 'No paired readings available';
+        labelEl.style.color = 'var(--text-secondary)';
+      } else if (p1 === p2) {
         labelEl.textContent = 'Identity Pair (Self-Correlation)';
         labelEl.style.color = 'var(--aqi-good)';
       } else if (corrVal >= 0.7) {
@@ -718,31 +928,28 @@ class CovarianceManager {
 
     // Dynamic Interpretation Readout
     if (interpEl) {
-      if (p1 === p2) {
-        interpEl.textContent = `${p1} evaluated against itself yields trivial perfect correlation (r = +1.00).`;
+      if (corrVal === null) {
+        interpEl.textContent = `No overlapping readings for ${p1} and ${p2} in AirQualityUCI.csv.`;
+      } else if (p1 === p2) {
+        interpEl.textContent = `${p1} evaluated against itself yields trivial perfect correlation (r = +1.00) across ${(resolved.n || 0).toLocaleString()} readings.`;
       } else {
         const absCorr = Math.abs(corrVal);
         const direction = corrVal >= 0 ? "positive" : "negative";
         const strength = absCorr >= 0.7 ? "strong" : absCorr >= 0.4 ? "moderate" : absCorr >= 0.1 ? "weak" : "negligible";
-        const units1 = (this.data.units && this.data.units[p1]) ? ` (${this.data.units[p1]})` : '';
-        const units2 = (this.data.units && this.data.units[p2]) ? ` (${this.data.units[p2]})` : '';
 
-        interpEl.textContent = `${p1}${units1} and ${p2}${units2} display a ${strength} ${direction} correlation (r = ${corrVal >= 0 ? '+' : ''}${corrVal.toFixed(2)}). ` +
-          (absCorr >= 0.5 
-            ? `Concentration variations in ${p1} closely mirror shifts in ${p2}, reflecting shared emission sources or atmospheric chemical coupling.` 
+        interpEl.textContent = `${p1}${u1} and ${p2}${u2} display a ${strength} ${direction} correlation (r = ${corrVal >= 0 ? '+' : ''}${corrVal.toFixed(2)}) over ${(resolved.n || 0).toLocaleString()} paired readings. ` +
+          (absCorr >= 0.5
+            ? `Concentration variations in ${p1} closely mirror shifts in ${p2}, reflecting shared emission sources or atmospheric chemical coupling.`
             : `The atmospheric behavior of ${p1} and ${p2} operates relatively independently under measured urban conditions.`);
       }
     }
 
     // Update Chart.js Scatter Chart
     if (this.scatterChart) {
-      const units1 = (this.data.units && this.data.units[p1]) ? ` (${this.data.units[p1]})` : '';
-      const units2 = (this.data.units && this.data.units[p2]) ? ` (${this.data.units[p2]})` : '';
-
       this.scatterChart.data.datasets[0].label = `${p1} vs ${p2}`;
       this.scatterChart.data.datasets[0].data = pts;
-      this.scatterChart.options.scales.x.title.text = `${p1}${units1}`;
-      this.scatterChart.options.scales.y.title.text = `${p2}${units2}`;
+      this.scatterChart.options.scales.x.title.text = `${p1}${u1}`;
+      this.scatterChart.options.scales.y.title.text = `${p2}${u2}`;
       this.scatterChart.update();
     }
   }
@@ -856,6 +1063,7 @@ class PolyfitManager {
     if (!this.canvas || !this.data || !this.data.degrees) return;
 
     const degData = this.data.degrees[this.currentDegree.toString()];
+    const { actualPoints, curvePoints, xRange } = buildPolyfitDatasets(this.data, this.currentDegree);
     const xLabel = this.data.x_label || 'Hour of day (0–23)';
     const yLabel = this.data.y_label || 'NO2 (µg/m³)';
 
@@ -871,7 +1079,7 @@ class PolyfitManager {
           {
             type: 'scatter',
             label: `Actual Telemetry (${yLabel})`,
-            data: degData.actual_points,
+            data: actualPoints,
             backgroundColor: 'rgba(74, 222, 128, 0.75)',
             borderColor: '#4ADE80',
             pointRadius: 4,
@@ -880,7 +1088,7 @@ class PolyfitManager {
           {
             type: 'line',
             label: `Polynomial Degree ${this.currentDegree} Fit`,
-            data: degData.curve_points,
+            data: curvePoints,
             borderColor: '#FB923C',
             borderWidth: 2.5,
             tension: 0.35,
@@ -896,8 +1104,8 @@ class PolyfitManager {
         scales: {
           x: {
             type: 'linear',
-            min: 0,
-            max: 23,
+            min: xRange[0],
+            max: xRange[1],
             title: { display: true, text: xLabel },
             grid: { color: 'rgba(148, 163, 173, 0.1)' },
             ticks: { stepSize: 2 }
@@ -918,8 +1126,10 @@ class PolyfitManager {
     const degData = this.data.degrees[degNum.toString()];
     if (!degData || !this.chart) return;
 
+    const { actualPoints, curvePoints } = buildPolyfitDatasets(this.data, degNum);
+    this.chart.data.datasets[0].data = actualPoints;
     this.chart.data.datasets[1].label = `Polynomial Degree ${degNum} Fit`;
-    this.chart.data.datasets[1].data = degData.curve_points;
+    this.chart.data.datasets[1].data = curvePoints;
     this.chart.update();
 
     this.updateMetrics(degData);
@@ -988,12 +1198,27 @@ class RidgeManager {
     this.interceptEl = document.getElementById('ridge-intercept');
     this.signFlipNoteEl = document.getElementById('ridge-signflip-note');
     this.corrPairsContainer = document.getElementById('ridge-corr-pairs');
+    this.nTestEl = document.getElementById('ridge-n-test');
+    this.nPredictorsEl = document.getElementById('ridge-n-predictors');
 
+    this.renderDatasetContext();
     this.renderTopCorrPairs();
     this.initScatterChart();
     this.initCoefChart();
     this.setupEvents();
     this.updateModel(this.currentModelKey);
+  }
+
+  /** Counts that used to be typed into the HTML, taken from the results file. */
+  renderDatasetContext() {
+    if (this.nTestEl && typeof this.data.n_test === 'number') {
+      const plotted = (this.data.pred_vs_actual_sample || []).length;
+      const note = plotted && plotted < this.data.n_test ? ` (${plotted} plotted)` : '';
+      this.nTestEl.textContent = `n = ${this.data.n_test.toLocaleString()} Test Samples${note}`;
+    }
+    if (this.nPredictorsEl) {
+      this.nPredictorsEl.textContent = `${(this.data.predictors || []).length} Predictors`;
+    }
   }
 
   renderTopCorrPairs() {
@@ -1006,10 +1231,10 @@ class RidgeManager {
       div.style.gap = '1.5rem';
       div.style.padding = '0.2rem 0';
       div.style.borderBottom = '1px dashed rgba(148, 163, 173, 0.15)';
-      
+
       const corrVal = pair.corr >= 0 ? `+${pair.corr.toFixed(3)}` : pair.corr.toFixed(3);
       const color = Math.abs(pair.corr) > 0.85 ? '#FB7185' : '#FBBF24';
-      
+
       div.innerHTML = `
         <span style="color: var(--text-primary);">${pair.a} ↔ ${pair.b}</span>
         <span style="color: ${color}; font-weight: 700;">${corrVal}</span>
@@ -1022,9 +1247,11 @@ class RidgeManager {
     const canvas = document.getElementById('ridge-scatter-chart');
     if (!canvas || !this.data || !this.data.pred_vs_actual_sample) return;
 
-    const points = this.data.pred_vs_actual_sample.map(d => ({ x: d.actual, y: d.predicted }));
-    let minVal = 0;
-    let maxVal = 8;
+    // Reference line spans the observed range of the held-out split, derived
+    // from the data rather than pinned to a fixed span.
+    const { points, refLine } = buildPredVsActual(this.data);
+    const unit = (this.data.target_unit || '').replace('mg/m3', 'mg/m³');
+    const target = this.data.target || 'CO(GT)';
 
     this.scatterChart = new Chart(canvas.getContext('2d'), {
       type: 'scatter',
@@ -1041,7 +1268,7 @@ class RidgeManager {
           {
             type: 'line',
             label: 'Perfect Prediction (y = x)',
-            data: [{ x: minVal, y: minVal }, { x: maxVal, y: maxVal }],
+            data: refLine,
             borderColor: 'rgba(148, 163, 173, 0.5)',
             borderWidth: 1.5,
             borderDash: [4, 4],
@@ -1057,11 +1284,11 @@ class RidgeManager {
         scales: {
           x: {
             type: 'linear',
-            title: { display: true, text: 'Actual CO(GT) Concentration (mg/m³)' },
+            title: { display: true, text: `Actual ${target}${unit ? ` (${unit})` : ''}` },
             grid: { color: 'rgba(148, 163, 173, 0.1)' }
           },
           y: {
-            title: { display: true, text: 'Predicted CO(GT) Concentration (mg/m³)' },
+            title: { display: true, text: `Predicted ${target}${unit ? ` (${unit})` : ''}` },
             grid: { color: 'rgba(148, 163, 173, 0.1)' }
           }
         }
@@ -1073,8 +1300,9 @@ class RidgeManager {
     const canvas = document.getElementById('ridge-coef-chart');
     if (!canvas || !this.data || !this.data.models) return;
 
-    const predictors = this.data.predictors || Object.keys(this.data.models.ols.coefficients);
-    const olsCoefs = predictors.map(p => this.data.models.ols.coefficients[p]);
+    const series = buildCoefSeries(this.data, 'ols');
+    const predictors = series.labels;
+    const olsCoefs = series.ols;
 
     this.coefChart = new Chart(canvas.getContext('2d'), {
       type: 'bar',
@@ -1137,13 +1365,13 @@ class RidgeManager {
     if (this.interceptEl) this.interceptEl.textContent = `β₀ = ${model.intercept.toFixed(4)}`;
 
     if (this.coefChart) {
-      const predictors = this.data.predictors || Object.keys(olsModel.coefficients);
-      const selectedCoefs = predictors.map(p => model.coefficients[p]);
-
-      const secondDatasetLabel = `Ridge (α = ${model.alpha})`;
-
-      this.coefChart.data.datasets[1].label = secondDatasetLabel;
-      this.coefChart.data.datasets[1].data = selectedCoefs;
+      const series = buildCoefSeries(this.data, modelKey);
+      this.coefChart.data.labels = series.labels;
+      this.coefChart.data.datasets[0].data = series.ols;
+      this.coefChart.data.datasets[1].label = model.alpha === 0
+        ? 'Selected model (OLS, α = 0)'
+        : `Ridge (α = ${model.alpha})`;
+      this.coefChart.data.datasets[1].data = series.selected;
       this.coefChart.update();
     }
 
@@ -1154,8 +1382,18 @@ class RidgeManager {
     if (!this.signFlipNoteEl) return;
 
     if (model.alpha === 0) {
+      // Derived from the fitted model, never hard-coded: the numbers shown here
+      // are the same ones plotted in the coefficient chart.
+      const d = describeOlsCollinearity(this.data);
+      if (!d) {
+        this.signFlipNoteEl.innerHTML = `
+          <strong>Unconstrained OLS Baseline (α=0):</strong> No predictor pair exceeds the collinearity threshold in this split.
+        `;
+        return;
+      }
+      const fmt = (v) => (v >= 0 ? `+${v.toFixed(4)}` : v.toFixed(4));
       this.signFlipNoteEl.innerHTML = `
-        <strong>Unconstrained OLS Baseline (α=0):</strong> Sensor predictors <code>PT08.S1(CO)</code> and <code>PT08.S5(O3)</code> carry high positive collinearity (r = 0.898). In OLS, this forces <code>PT08.S5(O3)</code> to take an inverted negative weight (β = -0.0385) to compensate for inflated <code>PT08.S2(NMHC)</code> (β = +1.3381).
+        <strong>Unconstrained OLS Baseline (α=0):</strong> Sensor predictors <code>${d.pair[0]}</code> and <code>${d.pair[1]}</code> carry high collinearity (r = ${d.pairCorr >= 0 ? '+' : ''}${d.pairCorr.toFixed(3)}). In OLS this forces <code>${d.suppressed.name}</code> to an inverted weight (β = ${fmt(d.suppressed.coef)}) to compensate for the inflated <code>${d.inflated.name}</code> (β = ${fmt(d.inflated.coef)}).
       `;
       return;
     }
@@ -1219,8 +1457,14 @@ class SVMManager {
     this.matrixGridEl = document.getElementById('svm-matrix-grid');
     this.thresholdsContainerEl = document.getElementById('svm-thresholds-container');
     this.boundaryCanvas = document.getElementById('svm-decision-canvas');
+    this.accuracySubEl = document.getElementById('svm-accuracy-sub');
+    this.boundaryTitleEl = document.getElementById('svm-boundary-title');
+    this.boundaryNoteEl = document.getElementById('svm-boundary-note');
+    this.dimValueEl = document.getElementById('svm-dim-value');
+    this.dimListEl = document.getElementById('svm-dim-list');
 
     this.renderThresholds();
+    this.renderDatasetContext();
     this.setupEvents();
     this.updateKernel(this.currentKernel);
   }
@@ -1228,12 +1472,14 @@ class SVMManager {
   renderThresholds() {
     if (!this.thresholdsContainerEl || !this.data || !this.data.category_thresholds) return;
     this.thresholdsContainerEl.innerHTML = '';
-    
+
     const catColors = {
       Safe: { bg: 'rgba(52, 211, 153, 0.1)', border: 'rgba(52, 211, 153, 0.3)', text: '#34d399' },
       Moderate: { bg: 'rgba(251, 191, 36, 0.1)', border: 'rgba(251, 191, 36, 0.3)', text: '#fbbf24' },
       Hazardous: { bg: 'rgba(248, 113, 113, 0.1)', border: 'rgba(248, 113, 113, 0.3)', text: '#f87171' }
     };
+
+    const unitLabel = (this.data.target_unit || 'mg/m3').replace('mg/m3', 'mg/m³');
 
     Object.entries(this.data.category_thresholds).forEach(([cat, range]) => {
       const c = catColors[cat] || catColors.Safe;
@@ -1246,10 +1492,20 @@ class SVMManager {
       chip.style.fontSize = '0.78rem';
       chip.innerHTML = `
         <strong style="color: ${c.text};">${cat}:</strong>
-        <span style="color: var(--text-primary); margin-left: 0.35rem;">${range.min} – ${range.max} mg/m³</span>
+        <span style="color: var(--text-primary); margin-left: 0.35rem;">${range.min} – ${range.max} ${unitLabel}</span>
       `;
       this.thresholdsContainerEl.appendChild(chip);
     });
+  }
+
+  /** Fills in the counts and feature lists that used to be typed into the HTML. */
+  renderDatasetContext() {
+    const predictors = this.data.predictors || [];
+    if (this.dimValueEl) this.dimValueEl.textContent = `${predictors.length}D`;
+    if (this.dimListEl) this.dimListEl.textContent = predictors.join(', ');
+    if (this.accuracySubEl && typeof this.data.n_test === 'number') {
+      this.accuracySubEl.textContent = `n = ${this.data.n_test.toLocaleString()} Test Samples`;
+    }
   }
 
   updateKernel(kernelKey) {
@@ -1264,6 +1520,7 @@ class SVMManager {
     const curAcc = parseFloat(this.accuracyEl ? this.accuracyEl.textContent : 0) || 0;
     const targetAcc = (kernelData.accuracy * 100);
     animateMonoNumber(this.accuracyEl, curAcc, targetAcc, 400, 1, '%');
+
 
     let bestF1 = 0;
     let bestClass = '';
@@ -1339,7 +1596,7 @@ class SVMManager {
         const isDiagonal = rIdx === cIdx;
         const totalInRow = row.reduce((a, b) => a + b, 0);
         const intensity = totalInRow > 0 ? (val / totalInRow) : 0;
-        
+
         const cell = document.createElement('div');
         cell.style.display = 'flex';
         cell.style.flexDirection = 'column';
@@ -1348,7 +1605,7 @@ class SVMManager {
         cell.style.padding = '0.75rem 0.4rem';
         cell.style.borderRadius = '4px';
         cell.style.border = isDiagonal ? `1px solid ${catColors[rIdx]}` : '1px solid rgba(148, 163, 173, 0.15)';
-        
+
         if (isDiagonal) {
           cell.style.background = `rgba(52, 211, 153, ${Math.max(0.18, intensity * 0.45)})`;
         } else if (val > 0) {
@@ -1367,65 +1624,139 @@ class SVMManager {
   }
 
   renderDecisionBoundaryCanvas() {
-    if (!this.boundaryCanvas || !this.data || !this.data.decision_boundary_2d) return;
-    const boundaryData = this.data.decision_boundary_2d;
-    
+    if (!this.boundaryCanvas || !this.data) return;
+
+    // The grid must belong to the kernel currently selected in the toolbar,
+    // otherwise the regions on screen describe a different model to the metrics.
+    const b = buildBoundaryGrid(this.data, this.currentKernel);
+    if (!b) return;
+
     const canvas = this.boundaryCanvas;
     const ctx = canvas.getContext('2d');
-    
+    const dpr = window.devicePixelRatio || 1;
+
     const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * (window.devicePixelRatio || 1);
-    canvas.height = rect.height * (window.devicePixelRatio || 1);
-    
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const grid = boundaryData.grid_labels;
-    const gridRes = boundaryData.grid_resolution || grid.length;
-    
-    const [xMin, xMax] = boundaryData.x_range;
-    const [yMin, yMax] = boundaryData.y_range;
+    // Plot area leaves room for real axis ticks and titles.
+    const padL = 58 * dpr;
+    const padR = 10 * dpr;
+    const padT = 10 * dpr;
+    const padB = 46 * dpr;
+    const plotW = Math.max(canvas.width - padL - padR, 1);
+    const plotH = Math.max(canvas.height - padT - padB, 1);
 
-    const cellW = canvas.width / gridRes;
-    const cellH = canvas.height / gridRes;
+    const gridRes = b.resolution;
+    const [xMin, xMax] = b.xRange;
+    const [yMin, yMax] = b.yRange;
+    const xSpan = (xMax - xMin) || 1;
+    const ySpan = (yMax - yMin) || 1;
+
+    const toPxX = (v) => padL + ((v - xMin) / xSpan) * plotW;
+    const toPxY = (v) => padT + plotH - ((v - yMin) / ySpan) * plotH;
 
     const regionColors = [
       'rgba(74, 222, 128, 0.28)',  // Safe (Green)
       'rgba(251, 191, 36, 0.28)',  // Moderate (Yellow)
       'rgba(251, 113, 133, 0.28)'  // Hazardous (Red)
     ];
-
     const pointColors = {
       Safe: '#4ADE80',
       Moderate: '#FBBF24',
       Hazardous: '#FB7185'
     };
 
+    const cellW = plotW / gridRes;
+    const cellH = plotH / gridRes;
+
+    // grid[r][c]: r indexes the y feature (ascending), c indexes the x feature.
     for (let r = 0; r < gridRes; r++) {
       for (let c = 0; c < gridRes; c++) {
-        const clsIdx = grid[r][c];
+        const clsIdx = b.grid[r][c];
         ctx.fillStyle = regionColors[clsIdx] || regionColors[0];
-        const x = c * cellW;
-        const y = (gridRes - 1 - r) * cellH;
-        ctx.fillRect(x, y, cellW + 0.5, cellH + 0.5);
+        ctx.fillRect(padL + c * cellW, padT + plotH - (r + 1) * cellH, cellW + 0.5, cellH + 0.5);
       }
     }
 
-    if (boundaryData.scatter_points && Array.isArray(boundaryData.scatter_points)) {
-      boundaryData.scatter_points.forEach(pt => {
-        const px = ((pt.x - xMin) / (xMax - xMin)) * canvas.width;
-        const py = canvas.height - (((pt.y - yMin) / (yMax - yMin)) * canvas.height);
+    // Axis frame
+    ctx.strokeStyle = 'rgba(148, 163, 173, 0.35)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.strokeRect(padL, padT, plotW, plotH);
 
-        ctx.beginPath();
-        ctx.arc(px, py, 3.5 * (window.devicePixelRatio || 1), 0, 2 * Math.PI);
-        ctx.fillStyle = pointColors[pt.label] || '#ffffff';
-        ctx.shadowColor = 'rgba(0,0,0,0.5)';
-        ctx.shadowBlur = 4;
-        ctx.fill();
-        ctx.lineWidth = 1 * (window.devicePixelRatio || 1);
-        ctx.strokeStyle = '#ffffff';
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-      });
+    // Axis ticks, so the plotted regions can be read against the CSV values
+    ctx.fillStyle = '#a1a1aa';
+    ctx.font = `${10 * dpr}px "JetBrains Mono", monospace`;
+    const TICKS = 5;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (let i = 0; i <= TICKS; i++) {
+      const v = xMin + (xSpan * i) / TICKS;
+      const px = toPxX(v);
+      ctx.beginPath();
+      ctx.moveTo(px, padT + plotH);
+      ctx.lineTo(px, padT + plotH + 4 * dpr);
+      ctx.stroke();
+      ctx.fillText(Math.round(v), px, padT + plotH + 6 * dpr);
+    }
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i <= TICKS; i++) {
+      const v = yMin + (ySpan * i) / TICKS;
+      const py = toPxY(v);
+      ctx.beginPath();
+      ctx.moveTo(padL - 4 * dpr, py);
+      ctx.lineTo(padL, py);
+      ctx.stroke();
+      ctx.fillText(Math.round(v), padL - 7 * dpr, py);
+    }
+
+    // Axis titles taken from the results file's feature names
+    ctx.fillStyle = '#a1a1aa';
+    ctx.font = `${11 * dpr}px Inter, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(b.featureX, padL + plotW / 2, canvas.height - 4 * dpr);
+    ctx.save();
+    ctx.translate(12 * dpr, padT + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textBaseline = 'top';
+    ctx.fillText(b.featureY, 0, 0);
+    ctx.restore();
+
+    // Real measured points on top of the regions
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
+    b.scatterPoints.forEach(pt => {
+      const px = toPxX(pt.x);
+      const py = toPxY(pt.y);
+      ctx.beginPath();
+      ctx.arc(px, py, 3.5 * dpr, 0, 2 * Math.PI);
+      ctx.fillStyle = pointColors[pt.label] || '#ffffff';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
+      ctx.shadowBlur = 4;
+      ctx.fill();
+      ctx.lineWidth = 1 * dpr;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    });
+
+    // Keep the panel copy describing the features that are actually plotted.
+    const kernelLabel = this.currentKernel === 'rbf' ? 'RBF' : 'Linear';
+    if (this.boundaryTitleEl) {
+      this.boundaryTitleEl.textContent =
+        `2D DECISION BOUNDARY - ${b.featureX} vs ${b.featureY} (${kernelLabel} KERNEL)`;
+    }
+    if (this.boundaryNoteEl) {
+      const nFit = b.nFitSamples ? b.nFitSamples.toLocaleString() : '';
+      this.boundaryNoteEl.textContent =
+        `${kernelLabel} SVC refitted on the two raw sensor channels ${b.featureX} and ${b.featureY}` +
+        `${nFit ? ` (${nFit} readings)` : ''} for visualisation; the accuracy metrics above use all ` +
+        `${(this.data.predictors || []).length} features.`;
     }
   }
 
@@ -1452,12 +1783,13 @@ class SVMManager {
 function initUnit2Sparklines(ridgeRes, svmRes) {
   const ridgeCanvas = document.getElementById('sparkline-ridge');
   if (ridgeCanvas && ridgeRes && ridgeRes.models) {
-    const alphas = Object.keys(ridgeRes.models).map(k => ridgeRes.models[k].alpha);
-    const r2s = Object.keys(ridgeRes.models).map(k => ridgeRes.models[k].r2_test);
+    const keys = Object.keys(ridgeRes.models);
+    const labels = keys.map(k => `\u03b1=${ridgeRes.models[k].alpha}`);
+    const r2s = keys.map(k => ridgeRes.models[k].r2_test);
     new Chart(ridgeCanvas.getContext('2d'), {
       type: 'line',
       data: {
-        labels: alphas,
+        labels: labels,
         datasets: [{
           data: r2s,
           borderColor: '#4ADE80',
@@ -1474,27 +1806,38 @@ function initUnit2Sparklines(ridgeRes, svmRes) {
         scales: { x: { display: false }, y: { display: false } }
       }
     });
+
+    const ridgeSub = document.querySelector('#card-ridge .sparkline-container + div span:first-child');
+    const pairs = ridgeRes.high_correlation_pairs || [];
+    if (ridgeSub && pairs.length) {
+      const top = pairs[0];
+      ridgeSub.textContent = `Top Corr Pair: ${top.a} \u2194 ${top.b} (r=${top.corr.toFixed(2)})`;
+    }
   }
 
   const svmCanvas = document.getElementById('sparkline-svm');
   if (svmCanvas && svmRes && svmRes.kernels) {
-    const linAcc = svmRes.kernels.linear ? svmRes.kernels.linear.accuracy * 100 : 80;
-    const rbfAcc = svmRes.kernels.rbf ? svmRes.kernels.rbf.accuracy * 100 : 85.5;
-    
+    const kernelKeys = Object.keys(svmRes.kernels);
+    const accs = kernelKeys.map(k => svmRes.kernels[k].accuracy * 100);
+
     // Update card text dynamically
     const svmSub = document.querySelector('#card-svm .sparkline-container + div span:first-child');
-    if (svmSub) {
-      svmSub.textContent = `RBF Kernel Accuracy: ${rbfAcc.toFixed(1)}%`;
+    if (svmSub && svmRes.kernels.rbf) {
+      svmSub.textContent = `RBF Kernel Accuracy: ${(svmRes.kernels.rbf.accuracy * 100).toFixed(1)}%`;
     }
-    
+
+    // Sparkline scale derived from the measured accuracies, not a fixed window.
+    const lo = Math.max(0, Math.floor(Math.min(...accs) - 5));
+    const hi = Math.min(100, Math.ceil(Math.max(...accs) + 5));
+
     new Chart(svmCanvas.getContext('2d'), {
       type: 'bar',
       data: {
-        labels: ['Linear', 'RBF'],
+        labels: kernelKeys.map(k => (k === 'rbf' ? 'RBF' : k.charAt(0).toUpperCase() + k.slice(1))),
         datasets: [{
-          data: [linAcc, rbfAcc],
-          backgroundColor: ['rgba(251, 191, 36, 0.7)', 'rgba(52, 211, 153, 0.85)'],
-          borderColor: ['#fbbf24', '#34d399'],
+          data: accs,
+          backgroundColor: kernelKeys.map(k => (k === 'rbf' ? 'rgba(52, 211, 153, 0.85)' : 'rgba(251, 191, 36, 0.7)')),
+          borderColor: kernelKeys.map(k => (k === 'rbf' ? '#34d399' : '#fbbf24')),
           borderWidth: 1,
           borderRadius: 4
         }]
@@ -1503,9 +1846,25 @@ function initUnit2Sparklines(ridgeRes, svmRes) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: { x: { display: false }, y: { display: false, min: 70, max: 95 } }
+        scales: { x: { display: false }, y: { display: false, min: lo, max: hi } }
       }
     });
   }
 }
 
+/* ==========================================================================
+   8. NODE EXPORTS (for tests/verify_graph_data.mjs)
+   -------------------------------------------------------------------------- */
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    buildImputationSeries,
+    imputationChartMae,
+    resolvePairScatter,
+    buildPolyfitDatasets,
+    buildPredVsActual,
+    buildCoefSeries,
+    buildBoundaryGrid,
+    describeOlsCollinearity,
+    formatPolynomialEquation
+  };
+}

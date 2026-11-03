@@ -10,7 +10,7 @@ Designed following the **shadcn/ui** modern zinc dark theme (`#09090b`), hairlin
 ## 📊 Dataset Specification
 
 All models, statistical analyses, regressions, and classifications are derived **exclusively** from the uploaded UCI Air Quality dataset:
-- **File**: [`data/AirQualityUCI.csv`](file:///c:/Users/HP/Desktop/ML%20PROJECT/data/AirQualityUCI.csv)
+- **File**: `data/AirQualityUCI.csv` (semicolon-delimited, comma decimal separator, `-200` missing-value sentinel)
 - **Timeframe**: March 10, 2004 – April 4, 2005 (1 year of continuous hourly atmospheric monitoring in an Italian city)
 - **Instances**: 9,357 valid hourly observations
 - **Target Pollutants & Chemical Sensors**:
@@ -46,6 +46,7 @@ All models, statistical analyses, regressions, and classifications are derived *
 │   └── svm.html                 -> Safe/Moderate/Hazardous classification, Linear vs RBF, 3×3 confusion matrix & 2D decision boundary
 ├── data/
 │   ├── AirQualityUCI.csv        -> Raw UCI Air Quality dataset (semicolon-delimited)
+│   ├── overview_results.json    -> Dataset summary + EPA CO air-quality index sweep driving the AQI dial
 │   ├── imputation_results.json  -> Missing telemetry & imputed values for Mean, Median, and KNN
 │   ├── covariance_results.json  -> 6×6 correlation matrix and full pairwise scatter data
 │   ├── polyfit_results.json     -> Degrees 1-4 curve data, equations, R², RMSE, and overfitting analysis
@@ -53,6 +54,8 @@ All models, statistical analyses, regressions, and classifications are derived *
 │   └── svm_results.json         -> Linear and RBF classification metrics, confusion matrices & 2D boundary grid
 ├── scripts/
 │   └── generate_all_results.py  -> Python pipeline script to recompute all JSON metrics from AirQualityUCI.csv
+├── tests/
+│   └── verify_graph_data.mjs    -> Re-parses the raw CSV and asserts every chart's input matches it
 ├── assets/
 │   ├── style.css                -> shadcn/ui zinc dark design system, pill badges, hairline panels, AQI scales
 │   ├── gauge.js                 -> Reusable Canvas AQI gauge engine (used in hero & persistent nav chip)
@@ -81,6 +84,49 @@ To re-run all calculations from `data/AirQualityUCI.csv`:
 ```bash
 python scripts/generate_all_results.py
 ```
+Requires `pandas`, `numpy` and `scikit-learn`.
+
+### Option 4: Verify the Charts Against the Dataset
+`tests/verify_graph_data.mjs` re-parses `data/AirQualityUCI.csv` with its own
+independent parser, imports the real chart-data-preparation functions out of
+`assets/charts.js`, and asserts that the numbers reaching every chart match the
+CSV — point values, axis labels, sample sizes, missing-value flags and class
+labels included. No dependencies beyond Node.
+
+```bash
+node tests/verify_graph_data.mjs
+```
+
+---
+
+## 📈 How the Numbers Reach the Screen
+
+Every figure on the site is precomputed by `scripts/generate_all_results.py` into
+the JSON files under `data/`, then read by `assets/charts.js` and `assets/gauge.js`
+at page load. **No dataset value is hard-coded in the HTML, CSS or JS** — the
+static text in the markup is only a `--` / "loading…" placeholder that the JSON
+replaces.
+
+Notable derivations:
+
+- **Correlation matrix** uses pairwise-complete rows, so each pair reports its own
+  sample size (`pair_counts` in `covariance_results.json`) rather than one
+  all-column complete-case count.
+- **Imputation MAE** for Mean, Median and KNN is scored over the *same* randomly
+  masked cells of the *same* fully-observed rows, so the three tabs are directly
+  comparable. The panel shows the MAE of the plotted column, `CO(GT)`, never the
+  cross-column average (which mixes mg/m³, ppb and µg/m³).
+- **Ridge and SVM** fit `StandardScaler` on the training split only, so the
+  reported R²/accuracy are not inflated by test-set leakage.
+- **SVM decision boundary** is a 2-feature model over the raw channels
+  `PT08.S1(CO)` and `PT08.S2(NMHC)` — one grid per kernel, so the regions always
+  match the selected kernel. It is *not* PCA.
+- **AQI dial** steps through real consecutive hourly readings: the US EPA
+  carbon-monoxide index of the 8-hour running mean of `CO(GT)`
+  (`ppm = mg/m³ × 24.45 / 28.01`). The whole derivation is exact integer
+  arithmetic so the published index is reproducible. Over this dataset the index
+  spans AQI 2–79 (mean 21.7). If `overview_results.json` cannot be loaded the dial
+  reads `--` rather than showing a placeholder value.
 
 ---
 
